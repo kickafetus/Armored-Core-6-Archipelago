@@ -25,7 +25,7 @@ Open `config_armoredcore6.toml` and add `ac6ap.dll` to the `external_dlls`
 list:
 
 ```toml
-external_dlls = ["ac6ap.dll"]
+external_dlls = ["mod/ac6ap.dll"]
 ```
 
 ## 4. Edit `ac6ap.cfg` with your connection details
