@@ -18,6 +18,8 @@
 #include "apclient.h"
 #include "partnames.h"
 
+#define AC6AP_VERSION "v0.1.3-Beta"
+
 static FILE* g_logFile = nullptr;
 
 void LogTagged(const char* tag, const char* format, ...) {
@@ -311,7 +313,7 @@ static void MainThread(void*) {
 static void OnLoad() {
     std::string logPath = GetDllDir() + "ac6ap_log.txt";
     g_logFile = _fsopen(logPath.c_str(), "w", _SH_DENYWR);
-    Log("DLL loaded successfully");
+    Log("DLL loaded successfully (version %s)", AC6AP_VERSION);
     _beginthread(MainThread, 0, nullptr);
 }
 
