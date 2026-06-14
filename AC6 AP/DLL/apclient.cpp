@@ -16,6 +16,8 @@
 #include "easywsclient.hpp"
 using easywsclient::WebSocket;
 
+#define AC6AP_LOG_TAG "AP"
+
 // ── AP / item-ID constants (must match the Python world) ─────────────────
 #define AC6_BASE_ID        7700000
 #define AC6_VICTORY_OFFSET 9000000

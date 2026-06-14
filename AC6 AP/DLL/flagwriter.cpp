@@ -1,6 +1,6 @@
 #include "flagwriter.h"
 
-// Both functions are direct ports of the SoulSplitter CSEventFlagMan
+#define AC6AP_LOG_TAG "FLAG_WRITE"
 
 bool ReadEventFlag(uintptr_t eventFlagMan, int32_t divisor, uint32_t flagId) {
     uint32_t category = flagId / divisor;

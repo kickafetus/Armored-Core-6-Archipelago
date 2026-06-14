@@ -9,6 +9,8 @@
 #include <atomic>
 #include <unordered_set>
 
+#define AC6AP_LOG_TAG "FLAG_READ"
+
 // AP location IDs = AC6_BASE_ID + flagId. Must match Python BASE_LOC_ID.
 #define AC6_BASE_ID 7700000
 

@@ -10,6 +10,7 @@
 #include <string>
 #include <fstream>
 
+#define AC6AP_LOG_TAG "DLL"
 #include "dllmain.h"
 #include "memory.h"
 #include "flagwriter.h"
@@ -17,22 +18,22 @@
 #include "apclient.h"
 #include "partnames.h"
 
-// ===========================================================================
-//  Logging
-// ===========================================================================
-
 static FILE* g_logFile = nullptr;
 
-void Log(const char* format, ...) {
+void LogTagged(const char* tag, const char* format, ...) {
     va_list args;
     va_start(args, format);
     char buffer[1024];
     vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+
     if (g_logFile) {
-        fprintf(g_logFile, "[AC6AP] %s\n", buffer);
+        SYSTEMTIME t;
+        GetLocalTime(&t);
+        fprintf(g_logFile, "%02d:%02d:%02d [%s] %s\n",
+            t.wHour, t.wMinute, t.wSecond, tag, buffer);
         fflush(g_logFile);
     }
-    va_end(args);
 }
 
 // ===========================================================================
@@ -286,7 +287,10 @@ static void MainThread(void*) {
 
     // Load connection settings from ac6ap.cfg, then connect.
     AC6Config cfg = LoadConfig(GetDllDir() + "ac6ap.cfg");
-    std::string uri = "ws://" + cfg.host + ":" + cfg.port;
+
+    std::string scheme = (cfg.host.find("archipelago.gg") != std::string::npos)
+        ? "wss://" : "ws://";
+    std::string uri = scheme + cfg.host + ":" + cfg.port;
     APClient_Connect(uri.c_str(), cfg.slot.c_str(), cfg.password.c_str());
 
     // Start watching flags.

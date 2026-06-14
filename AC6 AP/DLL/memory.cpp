@@ -6,6 +6,8 @@
 #include <vector>
 #include <string>
 
+#define AC6AP_LOG_TAG "MEM"
+
 // Parse a pattern string into bytes + mask.
 // Supports single "?" and double "??" wildcard tokens.
 static void ParsePattern(const char* pattern,

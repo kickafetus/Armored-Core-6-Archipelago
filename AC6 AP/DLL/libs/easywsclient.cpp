@@ -84,6 +84,8 @@ typedef int socket_t;
 #endif
 
 #include "easywsclient.hpp"
+#define AC6AP_LOG_TAG "WS"
+#include "../dllmain.h"
 
 using easywsclient::Callback_Imp;
 using easywsclient::BytesCallback_Imp;
@@ -102,7 +104,7 @@ namespace { // private module-only namespace
         hints.ai_socktype = SOCK_STREAM;
         snprintf(sport, 16, "%d", port);
         if ((ret = getaddrinfo(hostname.c_str(), sport, &hints, &result)) != 0) {
-            fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(ret));
+            Log("getaddrinfo: %s", gai_strerror(ret));
             return INVALID_SOCKET;
         }
         for (p = result; p != NULL; p = p->ai_next) {
@@ -250,7 +252,7 @@ namespace { // private module-only namespace
                     rxbuf.resize(N);
                     closesocket(sockfd);
                     readyState = CLOSED;
-                    fputs(ret < 0 ? "Connection error!\n" : "Connection closed!\n", stderr);
+                    Log(ret < 0 ? "Connection error!" : "Connection closed!");
                     break;
                 }
                 else {
@@ -266,7 +268,7 @@ namespace { // private module-only namespace
                 else if (ret <= 0) {
                     closesocket(sockfd);
                     readyState = CLOSED;
-                    fputs(ret < 0 ? "Connection error!\n" : "Connection closed!\n", stderr);
+                    Log(ret < 0 ? "Connection error!" : "Connection closed!");
                     break;
                 }
                 else {
@@ -328,7 +330,7 @@ namespace { // private module-only namespace
                     i = 10;
                     if (ws.N & 0x8000000000000000ull) {
                         isRxBad = true;
-                        fprintf(stderr, "ERROR: Frame has invalid frame length. Closing.\n");
+                        Log("ERROR: Frame has invalid frame length. Closing.");
                         close();
                         return;
                     }
@@ -367,7 +369,7 @@ namespace { // private module-only namespace
                 }
                 else if (ws.opcode == wsheader_type::PONG) {}
                 else if (ws.opcode == wsheader_type::CLOSE) { close(); }
-                else { fprintf(stderr, "ERROR: Got unexpected WebSocket message.\n"); close(); }
+                else { Log("ERROR: Got unexpected WebSocket message."); close(); }
                 rxbuf.erase(rxbuf.begin(), rxbuf.begin() + ws.header_size + (size_t)ws.N);
             }
         }
@@ -448,48 +450,58 @@ namespace { // private module-only namespace
         return strstr(host, "archipelago.gg") != nullptr;
     }
 
-    // Perform a wss:// connection: TCP connect, SSL handshake, WebSocket upgrade.
-    // Returns a fully-connected _RealWebSocket (with SSL members set) or nullptr.
-    static easywsclient::WebSocket::pointer
-        connect_wss(const char* host, int port, const char* path,
-            bool useMask, const std::string& origin) {
-        // TCP connect
-        socket_t sockfd = hostname_connect(host, port);
-        if (sockfd == INVALID_SOCKET) {
-            fprintf(stderr, "wss: TCP connect failed to %s:%d\n", host, port);
-            return nullptr;
-        }
-
-        // SSL handshake
-        SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
-        if (!ctx) { closesocket(sockfd); return nullptr; }
-        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
-
-        // Load trusted CAs from the Windows certificate store.
+    // Load trusted root CAs from the Windows certificate store into an SSL_CTX.
+    static void load_windows_root_certs(SSL_CTX* ctx) {
         HCERTSTORE hStore = CertOpenSystemStoreA(0, "ROOT");
-        if (hStore) {
-            X509_STORE* store = SSL_CTX_get_cert_store(ctx);
-            PCCERT_CONTEXT pCtx = nullptr;
-            while ((pCtx = CertEnumCertificatesInStore(hStore, pCtx)) != nullptr) {
-                const unsigned char* cert_data = pCtx->pbCertEncoded;
-                X509* x509 = d2i_X509(nullptr, &cert_data, pCtx->cbCertEncoded);
-                if (x509) {
-                    X509_STORE_add_cert(store, x509);
-                    X509_free(x509);
-                }
+        if (!hStore) return;
+        X509_STORE* store = SSL_CTX_get_cert_store(ctx);
+        PCCERT_CONTEXT pCtx = nullptr;
+        int added = 0;
+        while ((pCtx = CertEnumCertificatesInStore(hStore, pCtx)) != nullptr) {
+            const unsigned char* cert_data = pCtx->pbCertEncoded;
+            X509* x509 = d2i_X509(nullptr, &cert_data, pCtx->cbCertEncoded);
+            if (x509) {
+                if (X509_STORE_add_cert(store, x509) == 1) added++;
+                X509_free(x509);
             }
-            CertCloseStore(hStore, 0);
+        }
+        CertCloseStore(hStore, 0);
+        Log("wss: loaded %d root CAs from Windows store", added);
+    }
+
+    static easywsclient::WebSocket::pointer
+        try_ssl_handshake(socket_t sockfd, const char* host, int port, const char* path,
+            bool useMask, const std::string& origin, bool verify,
+            bool* out_cert_error) {
+        if (out_cert_error) *out_cert_error = false;
+
+        SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
+        if (!ctx) return nullptr;
+
+        if (verify) {
+            SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
+            load_windows_root_certs(ctx);
+        }
+        else {
+            SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, nullptr);
         }
 
         SSL* ssl = SSL_new(ctx);
-        if (!ssl) { SSL_CTX_free(ctx); closesocket(sockfd); return nullptr; }
+        if (!ssl) { SSL_CTX_free(ctx); return nullptr; }
         SSL_set_fd(ssl, (int)sockfd);
         SSL_set_tlsext_host_name(ssl, host);  // SNI
 
         if (SSL_connect(ssl) != 1) {
-            ERR_print_errors_fp(stderr);
-            fprintf(stderr, "wss: SSL handshake failed for %s\n", host);
-            SSL_free(ssl); SSL_CTX_free(ctx); closesocket(sockfd);
+            long vr = SSL_get_verify_result(ssl);
+            if (out_cert_error && vr != X509_V_OK) *out_cert_error = true;
+            ERR_print_errors_cb(
+                [](const char* str, size_t len, void*) -> int {
+                    Log("OpenSSL: %.*s", (int)len, str);
+                    return 1; // continue iterating
+                }, nullptr);
+            Log("wss: SSL handshake failed for %s (verify=%d, verify_result=%ld)",
+                host, (int)verify, vr);
+            SSL_free(ssl); SSL_CTX_free(ctx);
             return nullptr;
         }
 
@@ -517,19 +529,19 @@ namespace { // private module-only namespace
         int i = 0, status = 0;
         for (; i < 2 || (i < 1023 && line[i - 2] != '\r' && line[i - 1] != '\n'); ++i) {
             if (SSL_read(ssl, line + i, 1) <= 0) {
-                SSL_free(ssl); SSL_CTX_free(ctx); closesocket(sockfd); return nullptr;
+                SSL_free(ssl); SSL_CTX_free(ctx); return nullptr;
             }
         }
         line[i] = 0;
         if (sscanf(line, "HTTP/1.1 %d", &status) != 1 || status != 101) {
-            fprintf(stderr, "wss: upgrade failed (status %d) for %s\n", status, host);
-            SSL_free(ssl); SSL_CTX_free(ctx); closesocket(sockfd); return nullptr;
+            Log("wss: upgrade failed (status %d) for %s", status, host);
+            SSL_free(ssl); SSL_CTX_free(ctx); return nullptr;
         }
         // Drain headers
         while (true) {
             for (i = 0; i < 2 || (i < 1023 && line[i - 2] != '\r' && line[i - 1] != '\n'); ++i) {
                 if (SSL_read(ssl, line + i, 1) <= 0) {
-                    SSL_free(ssl); SSL_CTX_free(ctx); closesocket(sockfd); return nullptr;
+                    SSL_free(ssl); SSL_CTX_free(ctx); return nullptr;
                 }
             }
             if (line[0] == '\r' && line[1] == '\n') break;
@@ -544,9 +556,45 @@ namespace { // private module-only namespace
         fcntl(sockfd, F_SETFL, O_NONBLOCK);
 #endif
 
-        fprintf(stderr, "easywsclient: wss:// connected to %s:%d\n", host, port);
+        Log("easywsclient: wss:// connected to %s:%d%s", host, port,
+            verify ? "" : " (certificate verification disabled - fallback)");
         // Transfer ssl/ctx ownership into the WebSocket object
         return easywsclient::WebSocket::pointer(new _RealWebSocket(sockfd, useMask, ssl, ctx));
+    }
+
+    static easywsclient::WebSocket::pointer
+        connect_wss(const char* host, int port, const char* path,
+            bool useMask, const std::string& origin) {
+        // Attempt 1: verified.
+        socket_t sockfd = hostname_connect(host, port);
+        if (sockfd == INVALID_SOCKET) {
+            Log("wss: TCP connect failed to %s:%d", host, port);
+            return nullptr;
+        }
+        bool cert_error = false;
+        auto ws = try_ssl_handshake(sockfd, host, port, path, useMask, origin,
+            /*verify=*/true, &cert_error);
+        if (ws) return ws;
+        closesocket(sockfd);  // verified attempt failed; socket is spent
+
+        if (!cert_error) {
+            Log("wss: connection failed and was not a certificate error - not retrying");
+            return nullptr;
+        }
+
+        Log("wss: certificate verification failed - retrying without "
+            "verification (connection will still be encrypted)");
+
+        // Attempt 2: unverified, fresh socket.
+        sockfd = hostname_connect(host, port);
+        if (sockfd == INVALID_SOCKET) {
+            Log("wss: TCP reconnect failed to %s:%d", host, port);
+            return nullptr;
+        }
+        ws = try_ssl_handshake(sockfd, host, port, path, useMask, origin,
+            /*verify=*/false, nullptr);
+        if (!ws) closesocket(sockfd);
+        return ws;
     }
 
 
@@ -563,11 +611,11 @@ namespace { // private module-only namespace
         path[0] = '\0';
 
         if (url.size() >= 512) {
-            fprintf(stderr, "ERROR: url size limit exceeded: %s\n", url.c_str());
+            Log("ERROR: url size limit exceeded: %s", url.c_str());
             return nullptr;
         }
         if (origin.size() >= 200) {
-            fprintf(stderr, "ERROR: origin size limit exceeded: %s\n", origin.c_str());
+            Log("ERROR: origin size limit exceeded: %s", origin.c_str());
             return nullptr;
         }
 
@@ -582,7 +630,7 @@ namespace { // private module-only namespace
         else if (sscanf(url.c_str(), "ws://%[^:/]:%d", host, &port) == 2) {}
         else if (sscanf(url.c_str(), "ws://%[^:/]", host) == 1) { port = 80; }
         else {
-            fprintf(stderr, "ERROR: Could not parse WebSocket url: %s\n", url.c_str());
+            Log("ERROR: Could not parse WebSocket url: %s", url.c_str());
             return nullptr;
         }
 
@@ -592,12 +640,12 @@ namespace { // private module-only namespace
         if (use_tls_first) {
             // archipelago.gg or explicit wss:// go straight to TLS, no fallback
             int tls_port = (port == 80) ? 443 : port;
-            fprintf(stderr, "easywsclient: connecting wss:// to %s:%d\n", host, tls_port);
+            Log("easywsclient: connecting wss:// to %s:%d", host, tls_port);
             return connect_wss(host, tls_port, path, useMask, origin);
         }
 
         // ── Try plain ws:// first ────────────────────────────────────────────
-        fprintf(stderr, "easywsclient: trying ws:// to %s:%d\n", host, port);
+        Log("easywsclient: trying ws:// to %s:%d", host, port);
         socket_t sockfd = hostname_connect(host, port);
         if (sockfd != INVALID_SOCKET) {
             char line[1024];
@@ -639,27 +687,27 @@ namespace { // private module-only namespace
 #else
                         fcntl(sockfd, F_SETFL, O_NONBLOCK);
 #endif
-                        fprintf(stderr, "easywsclient: ws:// connected to %s:%d\n", host, port);
+                        Log("easywsclient: ws:// connected to %s:%d", host, port);
                         return easywsclient::WebSocket::pointer(new _RealWebSocket(sockfd, useMask));
                     }
                 }
                 else {
-                    fprintf(stderr, "easywsclient: ws:// rejected (status %d), trying wss://\n", status);
+                    Log("easywsclient: ws:// rejected (status %d), trying wss://", status);
                     closesocket(sockfd);
                 }
             }
         }
         else {
-            fprintf(stderr, "easywsclient: ws:// connect failed, trying wss://\n");
+            Log("easywsclient: ws:// connect failed, trying wss://");
         }
 
         // ── ws:// failed or rejected — fall back to wss:// ───────────────────
         int tls_port = (port == 80) ? 443 : port;
-        fprintf(stderr, "easywsclient: falling back to wss:// on %s:%d\n", host, tls_port);
+        Log("easywsclient: falling back to wss:// on %s:%d", host, tls_port);
         return connect_wss(host, tls_port, path, useMask, origin);
     }
 
-} 
+}
 
 namespace easywsclient {
 
@@ -676,4 +724,4 @@ namespace easywsclient {
         return ::from_url(url, false, origin);
     }
 
-} 
+}
