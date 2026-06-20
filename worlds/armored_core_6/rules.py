@@ -2,16 +2,31 @@ from worlds.AutoWorld import World
 from worlds.generic.Rules import set_rule
 from BaseClasses import MultiWorld
 
+from .locations import CYCLE_NAMES
+
+
+def _chapter_region(cycle: int, chapter: int) -> str:
+    # Must match create_regions in __init__.py.
+    prefix = "" if cycle == 0 else f"{CYCLE_NAMES[cycle]} "
+    return f"{prefix}Chapter {chapter}"
+
 
 def set_rules(world: World, multiworld: MultiWorld, player: int) -> None:
-    # ── Progression model ─────────────────────────────────────────────────
-    # Chapter/cycle order is enforced by the region graph (create_regions):
-    # Chapter 1 -> ... -> Chapter 5 -> NG+ Chapter 1 -> ... -> NG++ Chapter 5.
-    # AC6 has no item-based hard gates (you can clear any mission with default
-    # gear), so the region chain is the whole progression model — no per-chapter
-    # event-flag gates, which were unreliable anyway (chapter mission counts vary
-    # and change again in NG+/NG++). Goal/route locations are reachable once
-    # their cycle's Chapter 5 is, handled by placement.
+    # ── Cycle-access gating (multiworld balance) ───────────────────────────
+    # Within a cycle, AC6 has no item-based hard gates (you can clear any
+    # mission with default gear), so the region chain is the whole intra-cycle
+    # progression model. But the cycle TRANSITIONS must be gated on a real item,
+    # or the multiworld solver sees all of NG+/NG++ as reachable from sphere 0
+    # and may place other games' early-critical progression behind your NG++
+    # finale. So each cycle transition requires its access pass (a progression
+    # item create_items adds for multi-cycle modes).
+    cycle_pass = {1: "NG+ Access", 2: "NG++ Access"}
+    for cyc in range(1, world._num_cycles()):
+        entrance = f"{_chapter_region(cyc - 1, 5)} -> {_chapter_region(cyc, 1)}"
+        set_rule(
+            multiworld.get_entrance(entrance, player),
+            lambda state, it=cycle_pass[cyc]: state.has(it, player),
+        )
 
     # ── Arena — sequential rank gates ─────────────────────────────────────
     arena_order = ["F", "E", "D", "C", "B", "A", "S"]

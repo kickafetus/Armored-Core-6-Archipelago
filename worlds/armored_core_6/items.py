@@ -26,11 +26,19 @@ BASE_ID = 7700000
 VICTORY_OFFSET = 9000000   # handled by completion condition, never granted as a part
 COAM_OFFSET    = 1         # filler, skipped by DLL part-grant logic
 
+# Cycle-access passes: progression items that gate the NG+/NG++ regions in logic
+# (multiworld balance — see rules.py). Sentinel offsets the DLL recognises and
+# does NOT grant in-game; they exist only to give AP a real item to gate on.
+NGPLUS_OFFSET     = 2
+NGPLUSPLUS_OFFSET = 3
+
 ITEM_TABLE: dict[str, AC6ItemData] = {
 
     # ── Special / non-part ───────────────────────────────────────────────
     "AC6 Victory":               AC6ItemData(BASE_ID + VICTORY_OFFSET, ItemClassification.progression),
     "COAM x10000":               AC6ItemData(BASE_ID + COAM_OFFSET,    ItemClassification.filler),
+    "NG+ Access":                AC6ItemData(BASE_ID + NGPLUS_OFFSET,     ItemClassification.progression),
+    "NG++ Access":               AC6ItemData(BASE_ID + NGPLUSPLUS_OFFSET, ItemClassification.progression),
 
     # ── Arm Weapons — Right (10xxxxxx) ───────────────────────────────────
     "MA-J-200 RANSETSU-RF (R)":  AC6ItemData(BASE_ID + 10000000, ItemClassification.useful),
@@ -377,5 +385,5 @@ ARCHIVE_LOG_NAMES: frozenset[str] = frozenset()
 
 PART_NAMES: frozenset[str] = frozenset(
     n for n in ITEM_TABLE
-    if n not in ("AC6 Victory", "COAM x10000")
+    if n not in ("AC6 Victory", "COAM x10000", "NG+ Access", "NG++ Access")
 )

@@ -169,10 +169,20 @@ class ArmoredCore6World(World):
     def create_items(self) -> None:
         location_count = len(self._active_locations())
 
-        # Candidate part pool.
+        items: List[AC6Item] = []
+
+        # Cycle-access passes: one progression item per extra NG cycle this run
+        # uses (ng_plus_* -> "NG+ Access"; full_* -> "NG+ Access" + "NG++ Access").
+        # rules.py gates the NG+/NG++ regions on them, so the multiworld solver
+        # treats later-cycle checks as genuinely later rather than all sphere 0.
+        cycle_passes = ["NG+ Access", "NG++ Access"][: self._num_cycles() - 1]
+        for name in cycle_passes:
+            items.append(self.create_item(name))
+
+        # Candidate part pool (parts only; never the special items).
         pool_names: List[str] = [
             name for name in ITEM_TABLE
-            if name not in ("COAM x10000", "AC6 Victory") # This will never occur as locations < items.
+            if name not in ("COAM x10000", "AC6 Victory", "NG+ Access", "NG++ Access")
         ]
 
         # Shuffle with the seeded world RNG so the chosen subset varies
@@ -185,8 +195,8 @@ class ArmoredCore6World(World):
                 pool_names.remove(prio)
                 pool_names.insert(0, prio)
 
-        items: List[AC6Item] = []
-        for i in range(location_count):
+        # Fill the remaining locations with parts, then COAM filler.
+        for i in range(location_count - len(items)):
             name = pool_names[i] if i < len(pool_names) else "COAM x10000"
             items.append(self.create_item(name))
 

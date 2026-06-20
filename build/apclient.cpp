@@ -19,9 +19,11 @@ using easywsclient::WebSocket;
 #define AC6AP_LOG_TAG "AP"
 
 // ── AP / item-ID constants (must match the Python world) ─────────────────
-#define AC6_BASE_ID        7700000
-#define AC6_VICTORY_OFFSET 9000000
-#define AC6_COAM_OFFSET    1
+#define AC6_BASE_ID            7700000
+#define AC6_VICTORY_OFFSET     9000000
+#define AC6_COAM_OFFSET        1
+#define AC6_NGPLUS_OFFSET      2   // "NG+ Access" pass - logic gate, never granted
+#define AC6_NGPLUSPLUS_OFFSET  3   // "NG++ Access" pass - logic gate, never granted
 
 // ── Connection state ──────────────────────────────────────────────────────
 static std::atomic<bool>  g_apRunning{ false };
@@ -195,6 +197,9 @@ static void OnItemReceived(long long apItemId) {
     long long offset = apItemId - AC6_BASE_ID;
     if (offset == AC6_VICTORY_OFFSET) { Log("Received Victory (no grant)"); return; }
     if (offset == AC6_COAM_OFFSET) { Log("Received COAM filler (no grant)"); return; }
+    if (offset == AC6_NGPLUS_OFFSET || offset == AC6_NGPLUSPLUS_OFFSET) {
+        Log("Received NG cycle access pass (no grant)"); return;
+    }
     if (offset < 0) { Log("Item %lld out of range (skipped)", apItemId); return; }
 
     const char* name = GetPartName((int)offset);
