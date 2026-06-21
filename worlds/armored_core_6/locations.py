@@ -81,7 +81,7 @@ LOCATION_TABLE: dict[str, AC6LocationData] = {
     "Attack the Old Spaceport":                                           _loc(3428, "Chapter 3"),
     "Eliminate the Enforcement Squads/Destroy the Special Forces Craft":  _loc(3429, "Chapter 3"),
     "Eliminate Honest Brute":                                             _loc(3461, "Chapter 3"),
-    "Defend the Old Spaceport/Defend the Dam Complex":                    _loc(3462, "Chapter 3"),
+    "Defend the Old Spaceport":                                           _loc(3462, "Chapter 3"),
     "Historic Data Recovery":                                             _loc(3463, "Chapter 3"),
     "Destroy the Ice Worm":                                               _loc(3464, "Chapter 3"),
 
@@ -89,10 +89,10 @@ LOCATION_TABLE: dict[str, AC6LocationData] = {
     "Underground Exploration - Depth 1":                         _loc(3430, "Chapter 4"),
     "Underground Exploration - Depth 2":                         _loc(3431, "Chapter 4"),
     "Underground Exploration - Depth 3":                         _loc(3432, "Chapter 4"),
-    "Intercept the Redguns/Ambush the Vespers/Eliminate V.III":  _loc(3433, "Chapter 4"),
+    "Intercept the Redguns/Ambush the Vespers":                  _loc(3433, "Chapter 4"),
     "Unknown Territory Survey":                                  _loc(3434, "Chapter 4"),
     "Reach the Coral Convergence":                               _loc(3435, "Chapter 4"),
-    "Chapter 4 Side Operation":                                  _loc(3436, "Chapter 4"),
+    # 3436 dropped: it only fires as the NG++ Ch5 opener (MIA), never in base Ch4.
 
     # -- Chapter 5 --
     # Names follow the base (route-A / NG) Chapter 5. MIA, Regain Control of the
