@@ -272,7 +272,7 @@ static void HandleMessage(const std::string& msg) {
         // Run mode from slot_data (default single=0 if absent).
         size_t rm = 0; long long mode = 0;
         if (ExtractNextInt(msg, "run_mode", rm, mode)) g_runMode = (int)mode;
-        Log("Run mode: %d (0=single 1=full 2=full-cycled)", g_runMode);
+        Log("Run mode: %d (0=single 1=ng+ 2=ng+cycled 3=full 4=full-cycled)", g_runMode);
 
         LoadReceiveState();
         LoadCycle();

@@ -43,20 +43,23 @@ LOCATION_TABLE: dict[str, AC6LocationData] = {
     # triggers the DLL's first-garage grant gate. The DLL keys off flag IDs, not
     # names, so renaming a check here needs no DLL change.
     # -- Chapter 1 --
+    # 3400 + 3409 BOTH fire at the intro -> first garage (verified in discovery);
+    # 3409 is the "first garage visit" marker (drives the DLL grant gate), not a
+    # separate mission. Order follows the route-A (NG) playthrough.
     "Illegal Entry":                                                       _loc(3400, "Chapter 1"),
-    "Destroy Artillery Installations":                                     _loc(3401, "Chapter 1"),
-    "Grid 135 Cleanup":                                                    _loc(3402, "Chapter 1"),
+    "Grid 135 Cleanup":                                                    _loc(3401, "Chapter 1"),
+    "Destroy Artillery Installations":                                     _loc(3402, "Chapter 1"),
     "Destroy the Transport Helicopters":                                   _loc(3403, "Chapter 1"),
     "Destroy the Tester AC":                                               _loc(3404, "Chapter 1"),
     "Attack the Dam Complex":                                              _loc(3405, "Chapter 1"),
     "Destroy/Escort the Weaponized Mining Ship":                           _loc(3406, "Chapter 1"),
     "Operation Wallclimber":                                               _loc(3407, "Chapter 1"),
     "Retrieve Combat Logs":                                                _loc(3408, "Chapter 1"),
-    "Prisoner Rescue":                                                     _loc(3409, "Chapter 1"),
-    "Investigate BAWS Arsenal No. 2":                                      _loc(3450, "Chapter 1"),
-    "Obstruct the Mandatory Inspection":                                   _loc(3451, "Chapter 1"),
-    "Attack the Watchpoint":                                               _loc(3452, "Chapter 1"),
-    "Chapter 1 Side Operation 1":                                          _loc(3453, "Chapter 1"),
+    "First Garage Visit":                                                  _loc(3409, "Chapter 1"),
+    "Prisoner Rescue":                                                     _loc(3450, "Chapter 1"),
+    "Investigate BAWS Arsenal No. 2":                                      _loc(3451, "Chapter 1"),
+    "Obstruct the Mandatory Inspection":                                   _loc(3452, "Chapter 1"),
+    "Attack the Watchpoint":                                               _loc(3453, "Chapter 1"),
 
     # -- Chapter 2 --
     "Infiltrate Grid 086":                                                 _loc(3410, "Chapter 2"),
