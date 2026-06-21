@@ -47,7 +47,7 @@ static const AC6Location g_locations[] = {
     {3434, "Unknown Territory Survey"},
     {3435, "Reach the Coral Convergence"},
     {3436, "Chapter 4 Side Operation"},
-    {3440, "MIA"},
+    {3440, "Escape"},
     {3441, "Take the Uninhabited Floating City"},
     {3442, "Intercept the Corporate Forces/Eliminate Cinder Carla"},
     {3443, "Breach the Karman Line"},

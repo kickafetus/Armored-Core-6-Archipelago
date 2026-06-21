@@ -93,7 +93,11 @@ LOCATION_TABLE: dict[str, AC6LocationData] = {
     "Chapter 4 Side Operation":                                  _loc(3436, "Chapter 4"),
 
     # -- Chapter 5 --
-    "MIA":                                                                  _loc(3440, "Chapter 5"),
+    # Names follow the base (route-A / NG) Chapter 5. MIA, Regain Control of the
+    # Xylem and Coral Release are NG++ (Allmind) variants and are NOT used here;
+    # the route-A opener is "Escape". The finale (3447) is route-dependent, so it
+    # carries all three ending missions joined.
+    "Escape":                                                               _loc(3440, "Chapter 5"),
     "Take the Uninhabited Floating City":                                   _loc(3441, "Chapter 5"),
     "Intercept the Corporate Forces/Eliminate Cinder Carla":                _loc(3442, "Chapter 5"),
     "Breach the Karman Line":                                               _loc(3443, "Chapter 5"),
