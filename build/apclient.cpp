@@ -54,6 +54,20 @@ static std::string PlayerName(int slot) {
                                      : ("Player " + std::to_string(slot));
 }
 
+// slot -> game (from Connected slot_info) and game -> (item id -> name) from the
+// DataPackage. Together these name an item we send to another player's world.
+static std::map<int, std::string>                              g_slotGames;
+static std::map<std::string, std::map<long long, std::string>> g_itemNames;
+
+static std::string SentItemName(int recv, long long itemId) {
+    auto g = g_slotGames.find(recv);
+    if (g == g_slotGames.end()) return "";
+    auto m = g_itemNames.find(g->second);
+    if (m == g_itemNames.end()) return "";
+    auto it = m->second.find(itemId);
+    return it != m->second.end() ? it->second : "";
+}
+
 // Find "key":<number> at/after `from`, write value to `out`, advance `from`.
 // I honestly don't know how this works, it just does.
 static bool ExtractNextInt(const std::string& s, const std::string& key,
@@ -105,6 +119,154 @@ static void ParseConnectedPlayers(const std::string& msg) {
             g_playerNames[(int)slot] = nm;
     }
     Log("Players parsed: %zu", g_playerNames.size());
+}
+
+// ---------------------------------------------------------------------------
+//  Minimal JSON scanning, just enough to walk the DataPackage. Strings are
+//  handled with escapes so item names containing quotes/colons/braces don't
+//  break the walk. No allocation beyond the captured value.
+// ---------------------------------------------------------------------------
+
+// p is at the opening quote. Returns index after the closing quote; *out gets
+// the (unescaped) string value if provided.
+static size_t SkipString(const std::string& s, size_t p, std::string* out) {
+    std::string v;
+    p++;  // past opening quote
+    while (p < s.size()) {
+        char ch = s[p];
+        if (ch == '\\') {
+            if (p + 1 >= s.size()) { p++; break; }
+            char e = s[p + 1];
+            switch (e) {
+                case 'n': v += '\n'; break;  case 't': v += '\t'; break;
+                case 'u': p += 4; v += '?'; break;   // skip \uXXXX, placeholder
+                default:  v += e; break;             // " \ / etc -> literal
+            }
+            p += 2;
+        } else if (ch == '"') { p++; break; }
+        else { v += ch; p++; }
+    }
+    if (out) *out = v;
+    return p;
+}
+
+// p is at '{' or '['. Returns index of the matching close, or npos.
+static size_t MatchBrace(const std::string& s, size_t p) {
+    char open = s[p], close = (open == '{') ? '}' : ']';
+    int depth = 0;
+    while (p < s.size()) {
+        char ch = s[p];
+        if (ch == '"') { p = SkipString(s, p, nullptr); continue; }
+        if (ch == open) depth++;
+        else if (ch == close && --depth == 0) return p;
+        p++;
+    }
+    return std::string::npos;
+}
+
+// Parse a game's "item_name_to_id":{ "Name": id, ... } into g_itemNames[game].
+static void ParseItemMap(const std::string& s, size_t bstart, size_t bend,
+                         const std::string& game) {
+    size_t ip = s.find("\"item_name_to_id\":{", bstart);
+    if (ip == std::string::npos || ip >= bend) return;
+    size_t ob = ip + strlen("\"item_name_to_id\":");   // at '{'
+    size_t cb = MatchBrace(s, ob);
+    if (cb == std::string::npos || cb > bend) cb = bend;
+
+    auto& m = g_itemNames[game];
+    size_t p = ob + 1;
+    while (p < cb) {
+        while (p < cb && s[p] != '"') p++;
+        if (p >= cb) break;
+        std::string name;
+        size_t after = SkipString(s, p, &name);
+        size_t c = after;
+        while (c < cb && s[c] != ':') c++;
+        size_t q = c + 1;
+        while (q < cb && (s[q] == ' ' || s[q] == '\t')) q++;
+        bool neg = false; if (q < cb && s[q] == '-') { neg = true; q++; }
+        long long id = 0; bool any = false;
+        while (q < cb && s[q] >= '0' && s[q] <= '9') { id = id * 10 + (s[q] - '0'); q++; any = true; }
+        if (any) m[neg ? -id : id] = name;
+        p = q;
+    }
+}
+
+// Walk DataPackage "data":{"games":{ "GameA":{...}, ... }} and parse each game.
+static void ParseDataPackage(const std::string& msg) {
+    size_t gp = msg.find("\"games\":{");
+    if (gp == std::string::npos) return;
+    size_t ob = gp + strlen("\"games\":");   // at '{'
+    size_t cb = MatchBrace(msg, ob);
+    if (cb == std::string::npos) cb = msg.size();
+
+    int n = 0;
+    size_t p = ob + 1;
+    while (p < cb) {
+        while (p < cb && msg[p] != '"') p++;
+        if (p >= cb) break;
+        std::string game;
+        size_t after = SkipString(msg, p, &game);
+        size_t vob = msg.find('{', after);
+        if (vob == std::string::npos || vob >= cb) break;
+        size_t vcb = MatchBrace(msg, vob);
+        if (vcb == std::string::npos) break;
+        ParseItemMap(msg, vob, vcb, game);
+        n++;
+        p = vcb + 1;
+    }
+    Log("DataPackage parsed: %d game(s)", n);
+}
+
+// Parse Connected "slot_info":{ "1":{...,"game":"X"}, ... } into g_slotGames.
+static void ParseSlotInfo(const std::string& msg) {
+    size_t sp = msg.find("\"slot_info\":{");
+    if (sp == std::string::npos) return;
+    size_t ob = sp + strlen("\"slot_info\":");   // at '{'
+    size_t cb = MatchBrace(msg, ob);
+    if (cb == std::string::npos) return;
+
+    size_t p = ob + 1;
+    while (p < cb) {
+        while (p < cb && msg[p] != '"') p++;
+        if (p >= cb) break;
+        std::string slotStr;
+        size_t after = SkipString(msg, p, &slotStr);
+        size_t vob = msg.find('{', after);
+        if (vob == std::string::npos || vob >= cb) break;
+        size_t vcb = MatchBrace(msg, vob);
+        if (vcb == std::string::npos) break;
+        size_t g = msg.find("\"game\":\"", vob);
+        if (g != std::string::npos && g < vcb) {
+            std::string game;
+            SkipString(msg, g + strlen("\"game\":"), &game);
+            g_slotGames[atoi(slotStr.c_str())] = game;
+        }
+        p = vcb + 1;
+    }
+    Log("Slot games parsed: %zu", g_slotGames.size());
+}
+
+// From RoomInfo "games":[ "A", "B" ] build a GetDataPackage request for them.
+static std::string MakeDataPackageRequest(const std::string& msg) {
+    size_t gp = msg.find("\"games\":[");
+    if (gp == std::string::npos) return "";
+    size_t p = gp + strlen("\"games\":[");
+    size_t cb = msg.find(']', p);
+    std::string req = "[{\"cmd\":\"GetDataPackage\",\"games\":[";
+    bool first = true;
+    while (p < cb) {
+        while (p < cb && msg[p] != '"') p++;
+        if (p >= cb) break;
+        std::string g;
+        p = SkipString(msg, p, &g);
+        if (g.empty()) continue;
+        req += (first ? "" : ",");
+        req += "\"" + g + "\"";
+        first = false;
+    }
+    req += "]}]";
+    return req;
 }
 
 // ===========================================================================
@@ -313,8 +475,13 @@ static void HandleItemSend(const std::string& msg) {
     ExtractNextInt(msg, "location", s, locId);
     ExtractNextInt(msg, "player", s, finder);
 
-    if (finder == g_slotNumber && recv >= 0 && recv != g_slotNumber)
-        Overlay_Message(OVL_SENT, "Sent to %s", PlayerName((int)recv).c_str());
+    if (finder == g_slotNumber && recv >= 0 && recv != g_slotNumber) {
+        std::string iname = SentItemName((int)recv, itemId);
+        if (!iname.empty())
+            Overlay_Message(OVL_SENT, "Sent %s to %s", iname.c_str(), PlayerName((int)recv).c_str());
+        else
+            Overlay_Message(OVL_SENT, "Sent to %s", PlayerName((int)recv).c_str());
+    }
 }
 
 // ===========================================================================
@@ -333,6 +500,13 @@ static void HandleMessage(const std::string& msg) {
             if (ep != std::string::npos) g_seedName = msg.substr(sp, ep - sp);
         }
         QueueMessage(MakeConnectPacket());
+        std::string dp = MakeDataPackageRequest(msg);   // names for items we send
+        if (!dp.empty()) QueueMessage(dp);
+    }
+
+    // DataPackage -> build game -> item id -> name maps
+    if (msg.find("\"cmd\":\"DataPackage\"") != std::string::npos) {
+        ParseDataPackage(msg);
     }
 
     // Connected -> capture slot, load persisted grant count
@@ -347,6 +521,7 @@ static void HandleMessage(const std::string& msg) {
         Log("Run mode: %d (0=single 1=ng+ 2=ng+cycled 3=full 4=full-cycled)", g_runMode);
 
         ParseConnectedPlayers(msg);   // slot -> name, for "from/to" overlay text
+        ParseSlotInfo(msg);           // slot -> game, to name items we send
         LoadReceiveState();
         LoadCycle();
     }
