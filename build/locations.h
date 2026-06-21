@@ -24,7 +24,7 @@ static const AC6Location g_locations[] = {
     {3407, "Destroy/Escort the Weaponized Mining Ship"},
     {3450, "Operation Wallclimber"},
     {3451, "Retrieve Combat Logs"},
-    {3452, "Attack the Watchpoint"},
+    {3452, "Investigate BAWS Arsenal No. 2"},
     {3410, "Infiltrate Grid 086"},
     {3411, "Eliminate the Doser Faction/Stop the Secret Data Breach"},
     {3412, "Ocean Crossing"},

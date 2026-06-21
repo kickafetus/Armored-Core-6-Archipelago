@@ -62,7 +62,9 @@ LOCATION_TABLE: dict[str, AC6LocationData] = {
     "Destroy/Escort the Weaponized Mining Ship":  _loc(3407, "Chapter 1"),
     "Operation Wallclimber":                      _loc(3450, "Chapter 1"),
     "Retrieve Combat Logs":                       _loc(3451, "Chapter 1"),
-    "Attack the Watchpoint":                      _loc(3452, "Chapter 1"),
+    "Investigate BAWS Arsenal No. 2":             _loc(3452, "Chapter 1"),
+    # NOTE: "Attack the Watchpoint" is the Ch1 finale and fires NO story counter
+    # (clearing it flips the chapter marker 3000->3002), so it has no check here.
 
     # -- Chapter 2 --
     "Infiltrate Grid 086":                                      _loc(3410, "Chapter 2"),
