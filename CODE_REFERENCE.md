@@ -87,11 +87,17 @@ on a live save and the first-garage-visit flag (`3409`). Part IDs ↔ names live
 A minimal hand-rolled client over `easywsclient` (JSON parsed by string scanning):
 
 - On `RoomInfo` → sends `Connect` (`game = "Armored Core VI"`, `items_handling = 7`,
-  `slot_data = true`).
-- On `Connected` → captures slot number, reads `run_mode` from `slot_data`, loads
-  the persisted receive-count and NG cycle.
+  `slot_data = true`) and `GetDataPackage` for the room's games.
+- On `Connected` → captures slot number, reads `run_mode` from `slot_data`, parses
+  the players list (slot → name) and `slot_info` (slot → game), loads the persisted
+  receive-count and NG cycle.
+- On `DataPackage` → parses each game's `item_name_to_id` into game → id → name (a
+  small `SkipString`/`MatchBrace` scanner handles names with quotes/colons/braces).
+  Used to name items sent to other players in the overlay.
 - On `ReceivedItems` → grants any items past the persisted count (so reconnects,
-  which resend from index 0, never double-grant).
+  which resend from index 0, never double-grant); overlay shows "from \<player\>".
+- On `PrintJSON` `ItemSend` where we are the finder → overlay shows
+  "Sent \<item\> to \<player\>" (item resolved via the receiver's game).
 - Sends `LocationChecks` for checks; `StatusUpdate` (goal) when the run's required
   number of endings is reached.
 

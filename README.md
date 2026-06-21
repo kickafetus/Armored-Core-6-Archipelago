@@ -133,10 +133,12 @@ These live in `ac6ap.cfg`, are off by default, and don't affect normal play:
 
 ## Notes / known limits
 
-- An on-screen feed (top-left) shows items you receive and checks you complete.
-  It is a separate top-most overlay window, so it shows in **borderless/windowed**
-  mode (the default), not exclusive fullscreen. The AP text client remains the
-  full record.
+- An on-screen feed (top-left) shows items you receive (with who sent them),
+  checks you complete, and items you send to other players (named via the AP
+  DataPackage). It is a separate top-most overlay window, so it shows in
+  **borderless/windowed** mode (the default), not exclusive fullscreen; set
+  `overlay=0` in `ac6ap.cfg` to disable it. The AP text client remains the full
+  record.
 - Shop-purchase checks are not implemented. Checks come from story, key missions,
   arena, and mercenary ranks (plus optional archive logs).
 - Crashing during a mission removes items received during that mission.
