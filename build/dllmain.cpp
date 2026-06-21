@@ -52,6 +52,7 @@ struct AC6Config {
     bool        discover = false;       // discovery mode: log flag flips, no AP checks
     std::string discoverRanges = "";    // "a-b,c-d"; empty = sensible default
     bool        grantAllParts = false;  // enable F7 hotkey to unlock every part
+    bool        overlay = true;         // on-screen message feed (set 0 to disable)
 };
 
 static std::string Trim(const std::string& s) {
@@ -106,6 +107,7 @@ static AC6Config LoadConfig(const std::string& path) {
         else if (key == "discover")        cfg.discover = (val == "1" || val == "true");
         else if (key == "discover_ranges") cfg.discoverRanges = val;
         else if (key == "grant_all_parts") cfg.grantAllParts = (val == "1" || val == "true");
+        else if (key == "overlay")         cfg.overlay = !(val == "0" || val == "false");
     }
     Log("Config loaded: host=%s port=%s slot=%s",
         cfg.host.c_str(), cfg.port.c_str(), cfg.slot.c_str());
@@ -360,8 +362,10 @@ static void MainThread(void*) {
     FlagWatcher_Start(eventFlagMan);
 
     // On-screen message feed for received items / completed checks.
-    Overlay_Start();
-    Overlay_Message(OVL_INFO, "Armored Core VI Archipelago connected");
+    if (cfg.overlay) {
+        Overlay_Start();
+        Overlay_Message(OVL_INFO, "Armored Core VI Archipelago connected");
+    }
 
     Log("Setup complete. Watching flags and granting received items.");
 

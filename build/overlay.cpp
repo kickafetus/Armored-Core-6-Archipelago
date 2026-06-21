@@ -13,124 +13,111 @@
 
 // ===========================================================================
 //  A passive, click-through, top-most layered window that lists recent
-//  Archipelago events over the game. Drawn with GDI on its own thread. Magenta
-//  is the transparency key; everything else renders at a constant alpha. The
-//  window owns no game state and is wrapped so any failure is silent.
+//  Archipelago events over the game. Drawn with GDI on its own thread.
+//
+//  Design rules that keep it from ever hanging or disturbing the game:
+//   - NEVER send messages to other windows (no GetWindowText / SendMessage).
+//     The game window is located with GetWindowRect/EnumWindows only, which do
+//     not block on another thread. (An earlier version used GetWindowTextLength
+//     here and hung the overlay during loads.)
+//   - GDI objects (font, back-buffer DC + bitmap) are created ONCE and reused.
+//   - Magenta is the transparency color key; the window's class background is
+//     also magenta so it is transparent even before the first paint.
+//   - Render does no allocation that can throw inside the GDI section.
 // ===========================================================================
 
 namespace {
 
 constexpr wchar_t   kClassName[] = L"AC6AP_Overlay";
 constexpr COLORREF  kKey        = RGB(255, 0, 255);   // transparent color key
-constexpr int       kWidth      = 560;
+constexpr int       kWidth      = 600;
 constexpr int       kMaxLines   = 8;
-constexpr int       kLineH      = 26;
-constexpr int       kPadX       = 12;
-constexpr int       kPadY       = 10;
+constexpr int       kLineH      = 24;
+constexpr int       kPadX       = 10;
+constexpr int       kPadY       = 8;
+constexpr int       kHeight     = kPadY * 2 + kMaxLines * kLineH;
 constexpr DWORD     kLifeMs     = 12000;              // how long a message stays
 
-struct Msg {
-    std::wstring text;
-    COLORREF     color;
-    DWORD        born;
-};
+struct Msg { std::wstring text; COLORREF color; DWORD born; };
 
 std::mutex          g_mtx;
 std::deque<Msg>     g_msgs;
 std::atomic<bool>   g_running{ false };
 std::thread         g_thread;
-HWND                g_hwnd = nullptr;
-HFONT               g_font = nullptr;
+HWND                g_hwnd   = nullptr;
+HFONT               g_font   = nullptr;
+HDC                 g_memDC  = nullptr;   // cached back buffer
+HBITMAP             g_memBmp = nullptr;
+HBRUSH              g_keyBr  = nullptr;
+HWND                g_game   = nullptr;   // cached game window (may be null)
 
 COLORREF KindColor(AC6OverlayKind k) {
     switch (k) {
         case OVL_RECEIVED: return RGB(120, 230, 140);  // green
         case OVL_SENT:     return RGB(110, 200, 255);  // cyan
-        default:           return RGB(235, 235, 235);  // white
+        default:           return RGB(240, 240, 240);  // white
     }
 }
 
-// Find this process's main game window (visible, owner-less, titled), skipping
-// our own overlay window.
-HWND FindGameWindow() {
-    struct Ctx { DWORD pid; HWND found; } ctx{ GetCurrentProcessId(), nullptr };
-    EnumWindows([](HWND h, LPARAM lp) -> BOOL {
-        auto* c = reinterpret_cast<Ctx*>(lp);
-        if (h == g_hwnd) return TRUE;
-        DWORD pid = 0; GetWindowThreadProcessId(h, &pid);
-        if (pid != c->pid) return TRUE;
-        if (!IsWindowVisible(h) || GetWindow(h, GW_OWNER) != nullptr) return TRUE;
-        if (GetWindowTextLengthW(h) <= 0) return TRUE;
-        c->found = h;
-        return FALSE;
-    }, reinterpret_cast<LPARAM>(&ctx));
-    return ctx.found;
+// Pick this process's largest visible owner-less window = the game window.
+// Uses only non-blocking calls (no message is sent to any window).
+BOOL CALLBACK EnumProc(HWND h, LPARAM lp) {
+    if (h == g_hwnd) return TRUE;
+    DWORD pid = 0; GetWindowThreadProcessId(h, &pid);
+    if (pid != GetCurrentProcessId()) return TRUE;
+    if (!IsWindowVisible(h) || GetWindow(h, GW_OWNER) != nullptr) return TRUE;
+    RECT r; if (!GetWindowRect(h, &r)) return TRUE;
+    long area = (r.right - r.left) * (long)(r.bottom - r.top);
+    auto* best = reinterpret_cast<std::pair<HWND, long>*>(lp);
+    if (area > best->second) { best->second = area; best->first = h; }
+    return TRUE;
 }
-
-void DrawShadowText(HDC dc, int x, int y, const std::wstring& s, COLORREF col) {
-    SetBkMode(dc, TRANSPARENT);
-    SetTextColor(dc, RGB(0, 0, 0));
-    TextOutW(dc, x + 1, y + 1, s.c_str(), (int)s.size());   // shadow
-    SetTextColor(dc, col);
-    TextOutW(dc, x, y, s.c_str(), (int)s.size());
+HWND FindGameWindow() {
+    std::pair<HWND, long> best{ nullptr, 0 };
+    EnumWindows(EnumProc, reinterpret_cast<LPARAM>(&best));
+    return best.first;
 }
 
 void Render() {
-    if (!g_hwnd) return;
+    if (!g_hwnd || !g_memDC) return;
 
-    // Snapshot + expire.
-    std::vector<Msg> live;
+    // Expire + snapshot (small, fixed cap).
+    Msg live[kMaxLines];
+    int n = 0;
     DWORD now = GetTickCount();
     {
         std::lock_guard<std::mutex> lk(g_mtx);
         while (!g_msgs.empty() && now - g_msgs.front().born > kLifeMs)
             g_msgs.pop_front();
-        for (const auto& m : g_msgs) live.push_back(m);
+        for (const auto& m : g_msgs) { if (n < kMaxLines) live[n++] = m; }
     }
 
-    int rows   = (int)live.size();
-    int height = kPadY * 2 + (rows > 0 ? rows : 1) * kLineH;
+    // Anchor to the game window's top-left if we have it (no blocking calls).
+    if (!g_game || !IsWindow(g_game)) g_game = FindGameWindow();
+    int x = 40, y = 40;
+    RECT gr;
+    if (g_game && GetWindowRect(g_game, &gr)) { x = gr.left + 24; y = gr.top + 90; }
+    SetWindowPos(g_hwnd, nullptr, x, y, kWidth, kHeight,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
 
-    // Anchor to the game window's top-left, with a margin. Fall back to screen.
-    RECT gr{ 0, 0, 0, 0 };
-    HWND game = FindGameWindow();
-    if (game) GetClientRect(game, &gr);
-    POINT origin{ 40, 40 };
-    if (game) { POINT p{ 24, 90 }; ClientToScreen(game, &p); origin = p; }
-
-    SetWindowPos(g_hwnd, HWND_TOPMOST, origin.x, origin.y, kWidth, height,
-                 SWP_NOACTIVATE | SWP_NOREDRAW);
-
-    HDC     wdc = GetDC(g_hwnd);
-    HDC     mdc = CreateCompatibleDC(wdc);
-    HBITMAP bmp = CreateCompatibleBitmap(wdc, kWidth, height);
-    HBITMAP old = (HBITMAP)SelectObject(mdc, bmp);
-    HFONT   ofn = (HFONT)SelectObject(mdc, g_font);
-
-    HBRUSH keyBrush = CreateSolidBrush(kKey);
-    RECT full{ 0, 0, kWidth, height };
-    FillRect(mdc, &full, keyBrush);              // transparent background
-
-    if (rows > 0) {
-        HBRUSH bar = CreateSolidBrush(RGB(18, 18, 22));   // dark backing bar
-        RECT br{ 0, 0, kWidth, height };
-        FillRect(mdc, &br, bar);
-        DeleteObject(bar);
-        int y = kPadY;
-        for (const auto& m : live) {
-            DrawShadowText(mdc, kPadX, y, m.text, m.color);
-            y += kLineH;
-        }
+    // Paint the back buffer: magenta everywhere (transparent), shadowed text.
+    RECT full{ 0, 0, kWidth, kHeight };
+    FillRect(g_memDC, &full, g_keyBr);
+    SetBkMode(g_memDC, TRANSPARENT);
+    int ty = kPadY;
+    for (int i = 0; i < n; i++) {
+        SetTextColor(g_memDC, RGB(0, 0, 0));
+        TextOutW(g_memDC, kPadX + 1, ty + 1, live[i].text.c_str(), (int)live[i].text.size());
+        SetTextColor(g_memDC, live[i].color);
+        TextOutW(g_memDC, kPadX, ty, live[i].text.c_str(), (int)live[i].text.size());
+        ty += kLineH;
     }
 
-    BitBlt(wdc, 0, 0, kWidth, height, mdc, 0, 0, SRCCOPY);
-
-    SelectObject(mdc, ofn);
-    SelectObject(mdc, old);
-    DeleteObject(bmp);
-    DeleteObject(keyBrush);
-    DeleteDC(mdc);
-    ReleaseDC(g_hwnd, wdc);
+    HDC wdc = GetDC(g_hwnd);
+    if (wdc) {
+        BitBlt(wdc, 0, 0, kWidth, kHeight, g_memDC, 0, 0, SRCCOPY);
+        ReleaseDC(g_hwnd, wdc);
+    }
 }
 
 LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
@@ -139,29 +126,38 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 void ThreadMain() {
+    g_keyBr = CreateSolidBrush(kKey);
+
     WNDCLASSEXW wc{};
     wc.cbSize        = sizeof(wc);
     wc.lpfnWndProc   = WndProc;
     wc.hInstance     = GetModuleHandleW(nullptr);
     wc.lpszClassName = kClassName;
+    wc.hbrBackground = g_keyBr;   // transparent before first paint, never black
     RegisterClassExW(&wc);
 
     g_hwnd = CreateWindowExW(
         WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST |
         WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         kClassName, L"AC6AP Overlay", WS_POPUP,
-        40, 40, kWidth, kPadY * 2 + kLineH, nullptr, nullptr,
-        wc.hInstance, nullptr);
+        40, 40, kWidth, kHeight, nullptr, nullptr, wc.hInstance, nullptr);
     if (!g_hwnd) { Log("Overlay: CreateWindowEx failed (%lu)", GetLastError()); return; }
 
-    // Magenta = transparent; everything else at constant alpha.
-    SetLayeredWindowAttributes(g_hwnd, kKey, 225, LWA_COLORKEY | LWA_ALPHA);
+    SetLayeredWindowAttributes(g_hwnd, kKey, 0, LWA_COLORKEY);
 
-    g_font = CreateFontW(-18, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+    g_font = CreateFontW(-17, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
                          DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
-                         CLEARTYPE_QUALITY, FF_DONTCARE, L"Segoe UI");
+                         NONANTIALIASED_QUALITY, FF_DONTCARE, L"Segoe UI");
 
-    ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
+    HDC screen = GetDC(nullptr);
+    g_memDC  = CreateCompatibleDC(screen);
+    g_memBmp = CreateCompatibleBitmap(screen, kWidth, kHeight);
+    ReleaseDC(nullptr, screen);
+    SelectObject(g_memDC, g_memBmp);
+    SelectObject(g_memDC, g_font);
+
+    SetWindowPos(g_hwnd, HWND_TOPMOST, 40, 40, kWidth, kHeight,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
     Log("Overlay window created");
 
     while (g_running) {
@@ -171,11 +167,14 @@ void ThreadMain() {
             DispatchMessageW(&m);
         }
         Render();
-        Sleep(100);   // ~10 fps is plenty for a text feed
+        Sleep(120);
     }
 
-    if (g_font) { DeleteObject(g_font); g_font = nullptr; }
-    if (g_hwnd) { DestroyWindow(g_hwnd); g_hwnd = nullptr; }
+    if (g_memBmp) { DeleteObject(g_memBmp); g_memBmp = nullptr; }
+    if (g_memDC)  { DeleteDC(g_memDC);      g_memDC  = nullptr; }
+    if (g_font)   { DeleteObject(g_font);   g_font   = nullptr; }
+    if (g_hwnd)   { DestroyWindow(g_hwnd);  g_hwnd   = nullptr; }
+    if (g_keyBr)  { DeleteObject(g_keyBr);  g_keyBr  = nullptr; }
     UnregisterClassW(kClassName, GetModuleHandleW(nullptr));
 }
 
@@ -198,10 +197,9 @@ void Overlay_Message(AC6OverlayKind kind, const char* fmt, ...) {
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
 
-    // UTF-8/ANSI -> wide for GDI.
     wchar_t wbuf[512];
-    int n = MultiByteToWideChar(CP_UTF8, 0, buf, -1, wbuf, 512);
-    if (n <= 0) MultiByteToWideChar(CP_ACP, 0, buf, -1, wbuf, 512);
+    if (MultiByteToWideChar(CP_UTF8, 0, buf, -1, wbuf, 512) <= 0)
+        MultiByteToWideChar(CP_ACP, 0, buf, -1, wbuf, 512);
 
     std::lock_guard<std::mutex> lk(g_mtx);
     g_msgs.push_back({ wbuf, KindColor(kind), GetTickCount() });
