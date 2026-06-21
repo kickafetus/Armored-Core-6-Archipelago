@@ -84,6 +84,11 @@ static void WatcherLoop() {
             continue;
         }
 
+        // First-garage grant gate. Flag 3409 fires at the intro -> first garage.
+        // It is no longer an AP check (collapsed into the intro), so read it
+        // directly here. SetGarageVisited() is idempotent.
+        if (ReadEventFlag(ptr1, divisor, 3409)) SetGarageVisited();
+
         // Location checks
         for (int i = 0; i < g_locationCount; i++) {
             uint32_t flag = g_locations[i].flagId;
@@ -94,11 +99,6 @@ static void WatcherLoop() {
                 Log("CHECK: [%u] %s (cycle %d)", flag, g_locations[i].name, cycle);
                 g_sentFlags.insert(flag);
                 g_checksSent++;
-
-                // Check if Chapter 1 First Garage Visit is True
-                if (flag == 3409) {
-                    SetGarageVisited();
-                }
 
                 // Story/mission flags (3000-3999) reset each NG cycle, so their
                 // location IDs are offset by cycle to stay distinct across

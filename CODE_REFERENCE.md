@@ -53,14 +53,16 @@ runtime). This is the single primitive the whole mod is built on.
 The flag the mod watches are listed in `build/locations.h` (`g_locations`) and
 documented in [`FLAG_REFERENCE.md`](FLAG_REFERENCE.md). Categories:
 
-- **`3000`-`3999` - story / mission flags (cycled).** A per-mission completion
-  counter per chapter (positional: the Nth flag is "the Nth mission cleared",
-  not a fixed mission). These **reset every NG cycle**, so the DLL treats them
-  specially (see *NG cycles* below). `AC6_IsCycledFlag()` is the test. The AP
-  world gives each one a mission name lined up from the discovery playthroughs
-  (`worlds/armored_core_6/locations.py`); branch decisions are joined "A/B".
-  Flags that never fire on any tested route (`BRANCH_RESERVED_FLAGS`) are dropped
-  from seeds so they cannot strand items.
+- **`3000`-`3999` - story / mission flags (cycled).** Positional story
+  counters: clearing one mission can tick 2-3 of them at once, so they are NOT
+  1:1 with missions. The world keeps only one counter per mission and drops the
+  redundant co-firing ticks (`COLLAPSED_FLAGS`) plus the never-firing branch
+  flags (`BRANCH_RESERVED_FLAGS`), leaving a clean one-check-per-mission set with
+  names lined up from the discovery playthroughs (branch decisions joined "A/B").
+  These **reset every NG cycle**, so the DLL treats them specially (see *NG
+  cycles*). `AC6_IsCycledFlag()` is the test. `3409` (intro/garage) is collapsed
+  out as a check but the DLL still reads it directly for the first-garage grant
+  gate.
 - **`6050`-`6056` arena, `6200`-`6280` key missions, `6401`-`6417` merc ranks -
   one-time.** They persist across NG cycles and fire once.
 - **`6000`/`6001`/`6002` - endings A / B / C.** Used for goal detection; they

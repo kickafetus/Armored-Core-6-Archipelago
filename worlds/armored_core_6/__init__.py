@@ -8,7 +8,6 @@ from .items import (
 )
 from .locations import (
     AC6LocationData, LOCATION_TABLE, ARCHIVE_LOG_LOCATIONS, BASE_LOC_ID,
-    BRANCH_RESERVED_FLAGS,
     make_multiplier_locations, all_multiplier_locations,
     add_cycles, CYCLE_NAMES, NUM_CYCLES,
 )
@@ -93,13 +92,9 @@ class ArmoredCore6World(World):
             locs.update(make_multiplier_locations(mult))
         if self._archive_logs_on():
             locs.update(ARCHIVE_LOG_LOCATIONS)
-        # Branch-reserved story checks never fired on any tested route (NG/NG+/
-        # NG++). With chapter/cycle access passes now acting as progression, a
-        # dead check that could hold a pass is a soft-lock hazard, so drop them
-        # entirely in every mode. (This is also the single-run route trimming:
-        # a single playthrough only ever follows one branch.)
-        locs = {n: d for n, d in locs.items()
-                if d.flag_id not in BRANCH_RESERVED_FLAGS}
+        # Branch-reserved and collapsed (co-firing) story counters are simply not
+        # in LOCATION_TABLE anymore, so nothing to filter here: every entry is a
+        # real one-check-per-mission location that fires on the route.
         # Cycled modes duplicate the story checks across this run's cycle count.
         if self._dup_checks():
             return add_cycles(locs, self._num_cycles())

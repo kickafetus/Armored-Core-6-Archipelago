@@ -15,6 +15,15 @@ BASE_LOC_ID = 7700000
 # are referenced in the mission controller for branch choices not taken. Their
 # checks can therefore strand items, so they are excluded from progression in
 # every mode and omitted entirely from single-run seeds (see __init__.py).
+# Redundant story counters that co-fire with another counter on the SAME mission
+# (verified consistent across the NG and NG++ discovery runs). Dropped as checks
+# so each mission yields exactly one story check. 3409 also drives the DLL garage
+# gate, which the DLL reads directly (not as a check).
+COLLAPSED_FLAGS = frozenset({
+    3405, 3408, 3409, 3453,        # Chapter 1
+    3425, 3426, 3460, 3465, 3466,  # Chapter 3
+})
+
 BRANCH_RESERVED_FLAGS = frozenset({
     3413, 3414, 3415, 3416, 3417, 3418, 3419,   # Chapter 2
     3437, 3438, 3439,                            # Chapter 4
@@ -31,88 +40,64 @@ def _loc(flag_id: int, region: str) -> AC6LocationData:
 # ---------------------------------------------------------------------------
 LOCATION_TABLE: dict[str, AC6LocationData] = {
 
-    # -- Story progression (Chapters 1-5) --
-    # Mission names for the per-mission story COMPLETION-COUNTER flags. The 34xx
-    # flags are shared positional counters (one ticks per mission cleared, in
-    # play order), NOT fixed per-mission flags, so a name is the mission that
-    # occupies that slot on the normal route. Names were lined up from the three
-    # logged discovery playthroughs (NG / NG+ / NG++) cross-referenced with the
-    # datamined mission table; branch DECISION points are joined "A/B". Flags in
-    # BRANCH_RESERVED_FLAGS never fired on any tested route (reserved for other
-    # branch choices) and are trimmed from single-run seeds. flag 3409 also
-    # triggers the DLL's first-garage grant gate. The DLL keys off flag IDs, not
-    # names, so renaming a check here needs no DLL change.
+    # -- Story progression (Chapters 1-5) -- ONE CHECK PER MISSION --
+    # The 34xx flags are positional story counters: clearing one mission can tick
+    # 2-3 of them at once, so they are NOT 1:1 with missions. The redundant
+    # co-firing ticks (COLLAPSED_FLAGS) are dropped here so each mission maps to
+    # exactly one check, which also lets the names line up. Co-fire groups and
+    # names were taken from the logged discovery runs (NG / NG+ / NG++); branch
+    # DECISION points are joined "A/B". Chapter 2-5 follow the observed route-A
+    # order; Chapter 1's exact order is a best guess (it was only logged in NG++).
+    # flag 3409 (intro/garage) is collapsed into 3400 but the DLL still reads it
+    # directly for the first-garage grant gate. Renaming a check needs no DLL
+    # change (the DLL keys off flag IDs).
+
     # -- Chapter 1 --
-    # 3400 + 3409 BOTH fire at the intro -> first garage (verified in discovery);
-    # 3409 is the "first garage visit" marker (drives the DLL grant gate), not a
-    # separate mission. Order follows the route-A (NG) playthrough.
-    "Illegal Entry":                                                       _loc(3400, "Chapter 1"),
-    "Grid 135 Cleanup":                                                    _loc(3401, "Chapter 1"),
-    "Destroy Artillery Installations":                                     _loc(3402, "Chapter 1"),
-    "Destroy the Transport Helicopters":                                   _loc(3403, "Chapter 1"),
-    "Destroy the Tester AC":                                               _loc(3404, "Chapter 1"),
-    "Attack the Dam Complex":                                              _loc(3405, "Chapter 1"),
-    "Destroy/Escort the Weaponized Mining Ship":                           _loc(3406, "Chapter 1"),
-    "Operation Wallclimber":                                               _loc(3407, "Chapter 1"),
-    "Retrieve Combat Logs":                                                _loc(3408, "Chapter 1"),
-    "First Garage Visit":                                                  _loc(3409, "Chapter 1"),
-    "Prisoner Rescue":                                                     _loc(3450, "Chapter 1"),
-    "Investigate BAWS Arsenal No. 2":                                      _loc(3451, "Chapter 1"),
-    "Obstruct the Mandatory Inspection":                                   _loc(3452, "Chapter 1"),
-    "Attack the Watchpoint":                                               _loc(3453, "Chapter 1"),
+    "Illegal Entry":                              _loc(3400, "Chapter 1"),
+    "Grid 135 Cleanup":                           _loc(3401, "Chapter 1"),
+    "Destroy Artillery Installations":            _loc(3402, "Chapter 1"),
+    "Destroy the Transport Helicopters":          _loc(3403, "Chapter 1"),
+    "Destroy the Tester AC":                      _loc(3404, "Chapter 1"),
+    "Attack the Dam Complex":                     _loc(3406, "Chapter 1"),
+    "Destroy/Escort the Weaponized Mining Ship":  _loc(3407, "Chapter 1"),
+    "Operation Wallclimber":                      _loc(3450, "Chapter 1"),
+    "Retrieve Combat Logs":                       _loc(3451, "Chapter 1"),
+    "Attack the Watchpoint":                      _loc(3452, "Chapter 1"),
 
     # -- Chapter 2 --
-    "Infiltrate Grid 086":                                                 _loc(3410, "Chapter 2"),
-    "Eliminate the Doser Faction/Stop the Secret Data Breach":             _loc(3411, "Chapter 2"),
-    "Ocean Crossing":                                                      _loc(3412, "Chapter 2"),
-    "Chapter 2 Side Operation 1":                                          _loc(3413, "Chapter 2"),
-    "Chapter 2 Side Operation 2":                                          _loc(3414, "Chapter 2"),
-    "Chapter 2 Side Operation 3":                                          _loc(3415, "Chapter 2"),
-    "Chapter 2 Side Operation 4":                                          _loc(3416, "Chapter 2"),
-    "Chapter 2 Side Operation 5":                                          _loc(3417, "Chapter 2"),
-    "Chapter 2 Side Operation 6":                                          _loc(3418, "Chapter 2"),
-    "Chapter 2 Side Operation 7":                                          _loc(3419, "Chapter 2"),
+    "Infiltrate Grid 086":                                      _loc(3410, "Chapter 2"),
+    "Eliminate the Doser Faction/Stop the Secret Data Breach":  _loc(3411, "Chapter 2"),
+    "Ocean Crossing":                                           _loc(3412, "Chapter 2"),
 
     # -- Chapter 3 --
-    "Steal the Survey Data":                                               _loc(3420, "Chapter 3"),
-    "Attack the Refueling Base":                                           _loc(3421, "Chapter 3"),
-    "Eliminate V.VII":                                                     _loc(3422, "Chapter 3"),
-    "Tunnel Sabotage/Prevent Corporate Salvage of New Tech":               _loc(3423, "Chapter 3"),
-    "Survey the Uninhabited Floating City":                                _loc(3424, "Chapter 3"),
-    "Heavy Missile Launch Support":                                        _loc(3425, "Chapter 3"),
-    "Eliminate the Enforcement Squads/Destroy the Special Forces Craft":   _loc(3426, "Chapter 3"),
-    "Attack the Old Spaceport":                                            _loc(3427, "Chapter 3"),
-    "Eliminate Honest Brute":                                              _loc(3428, "Chapter 3"),
-    "Defend the Old Spaceport/Defend the Dam Complex":                     _loc(3429, "Chapter 3"),
-    "Historic Data Recovery":                                              _loc(3460, "Chapter 3"),
-    "Coral Export Denial (Sortie)":                                        _loc(3461, "Chapter 3"),
-    "Destroy the Ice Worm":                                                _loc(3462, "Chapter 3"),
-    "Chapter 3 Side Operation 1":                                          _loc(3463, "Chapter 3"),
-    "Chapter 3 Side Operation 2":                                          _loc(3464, "Chapter 3"),
-    "Chapter 3 Side Operation 3":                                          _loc(3465, "Chapter 3"),
-    "Chapter 3 Side Operation 4":                                          _loc(3466, "Chapter 3"),
+    "Steal the Survey Data":                                              _loc(3420, "Chapter 3"),
+    "Attack the Refueling Base":                                          _loc(3421, "Chapter 3"),
+    "Eliminate V.VII":                                                    _loc(3422, "Chapter 3"),
+    "Survey the Uninhabited Floating City":                               _loc(3423, "Chapter 3"),
+    "Tunnel Sabotage/Prevent Corporate Salvage of New Tech":              _loc(3424, "Chapter 3"),
+    "Heavy Missile Launch Support":                                       _loc(3427, "Chapter 3"),
+    "Attack the Old Spaceport":                                           _loc(3428, "Chapter 3"),
+    "Eliminate the Enforcement Squads/Destroy the Special Forces Craft":  _loc(3429, "Chapter 3"),
+    "Eliminate Honest Brute":                                             _loc(3461, "Chapter 3"),
+    "Defend the Old Spaceport/Defend the Dam Complex":                    _loc(3462, "Chapter 3"),
+    "Historic Data Recovery":                                             _loc(3463, "Chapter 3"),
+    "Destroy the Ice Worm":                                               _loc(3464, "Chapter 3"),
 
     # -- Chapter 4 --
-    "Underground Exploration - Depth 1":                                   _loc(3430, "Chapter 4"),
-    "Underground Exploration - Depth 2":                                   _loc(3431, "Chapter 4"),
-    "Underground Exploration - Depth 3":                                   _loc(3432, "Chapter 4"),
-    "Intercept the Redguns/Ambush the Vespers/Eliminate V.III":            _loc(3433, "Chapter 4"),
-    "Unknown Territory Survey":                                            _loc(3434, "Chapter 4"),
-    "Reach the Coral Convergence":                                         _loc(3435, "Chapter 4"),
-    "Chapter 4 Side Operation 1":                                          _loc(3436, "Chapter 4"),
-    "Chapter 4 Side Operation 2":                                          _loc(3437, "Chapter 4"),
-    "Chapter 4 Side Operation 3":                                          _loc(3438, "Chapter 4"),
-    "Chapter 4 Side Operation 4":                                          _loc(3439, "Chapter 4"),
+    "Underground Exploration - Depth 1":                         _loc(3430, "Chapter 4"),
+    "Underground Exploration - Depth 2":                         _loc(3431, "Chapter 4"),
+    "Underground Exploration - Depth 3":                         _loc(3432, "Chapter 4"),
+    "Intercept the Redguns/Ambush the Vespers/Eliminate V.III":  _loc(3433, "Chapter 4"),
+    "Unknown Territory Survey":                                  _loc(3434, "Chapter 4"),
+    "Reach the Coral Convergence":                               _loc(3435, "Chapter 4"),
+    "Chapter 4 Side Operation":                                  _loc(3436, "Chapter 4"),
 
     # -- Chapter 5 --
-    "MIA":                                                                 _loc(3440, "Chapter 5"),
-    "Take the Uninhabited Floating City":                                  _loc(3441, "Chapter 5"),
-    "Intercept the Corporate Forces/Eliminate Cinder Carla":               _loc(3442, "Chapter 5"),
-    "Breach the Karman Line":                                              _loc(3443, "Chapter 5"),
-    "Destroy the Drive Block":                                             _loc(3444, "Chapter 5"),
-    "Regain Control of the Xylem":                                         _loc(3445, "Chapter 5"),
-    "Chapter 5 Side Operation 1":                                          _loc(3446, "Chapter 5"),
-    "Shut Down the Closure Satellites/Bring Down the Xylem/Coral Release": _loc(3447, "Chapter 5"),
+    "MIA":                                                                  _loc(3440, "Chapter 5"),
+    "Take the Uninhabited Floating City":                                   _loc(3441, "Chapter 5"),
+    "Intercept the Corporate Forces/Eliminate Cinder Carla":                _loc(3442, "Chapter 5"),
+    "Breach the Karman Line":                                               _loc(3443, "Chapter 5"),
+    "Shut Down the Closure Satellites/Bring Down the Xylem/Coral Release":  _loc(3447, "Chapter 5"),
 
     # -- Key missions (one-time story milestones; persist across NG cycles) --
     # Confirmed firing on these missions across the playthroughs. 6245/6275/6280
