@@ -10,6 +10,7 @@
 #include <mutex>
 #include <queue>
 #include <vector>
+#include <map>
 #include <string>
 #include <sstream>
 #include <fstream>
@@ -45,6 +46,14 @@ static std::string g_seedName = "";
 static int         g_slotNumber = -1;
 static bool        g_receiveStateLoaded = false;
 
+// slot number -> display name, parsed from the Connected packet's players list.
+static std::map<int, std::string> g_playerNames;
+static std::string PlayerName(int slot) {
+    auto it = g_playerNames.find(slot);
+    return it != g_playerNames.end() ? it->second
+                                     : ("Player " + std::to_string(slot));
+}
+
 // Find "key":<number> at/after `from`, write value to `out`, advance `from`.
 // I honestly don't know how this works, it just does.
 static bool ExtractNextInt(const std::string& s, const std::string& key,
@@ -64,6 +73,38 @@ static bool ExtractNextInt(const std::string& s, const std::string& key,
     out = neg ? -val : val;
     from = p;
     return true;
+}
+
+// Find "key":"value" at/after `from`, write value to `out`, advance `from`.
+// (Does not unescape; player names with embedded quotes are not expected.)
+static bool ExtractNextStr(const std::string& s, const std::string& key,
+    size_t& from, std::string& out) {
+    std::string pat = "\"" + key + "\":\"";
+    size_t p = s.find(pat, from);
+    if (p == std::string::npos) return false;
+    p += pat.size();
+    size_t e = s.find("\"", p);
+    if (e == std::string::npos) return false;
+    out = s.substr(p, e - p);
+    from = e + 1;
+    return true;
+}
+
+// Build slot -> name from the Connected packet's "players":[{slot,alias,name}].
+static void ParseConnectedPlayers(const std::string& msg) {
+    size_t pp = msg.find("\"players\":[");
+    if (pp == std::string::npos) return;
+    size_t end = msg.find(']', pp);                 // player objects contain no ']'
+    std::string arr = (end == std::string::npos) ? msg.substr(pp)
+                                                  : msg.substr(pp, end - pp);
+    size_t scan = 0; long long slot;
+    while (ExtractNextInt(arr, "slot", scan, slot)) {
+        size_t s = scan; std::string nm;
+        if (ExtractNextStr(arr, "alias", s, nm) ||
+            (s = scan, ExtractNextStr(arr, "name", s, nm)))
+            g_playerNames[(int)slot] = nm;
+    }
+    Log("Players parsed: %zu", g_playerNames.size());
 }
 
 // ===========================================================================
@@ -196,7 +237,7 @@ void APClient_SendGoal() {
 //  Granting received items
 // ===========================================================================
 
-static void OnItemReceived(long long apItemId) {
+static void OnItemReceived(long long apItemId, int finder) {
     long long offset = apItemId - AC6_BASE_ID;
     if (offset == AC6_VICTORY_OFFSET) { Log("Received Victory (no grant)"); return; }
     if (offset == AC6_COAM_OFFSET) { Log("Received COAM filler (no grant)"); return; }
@@ -208,13 +249,18 @@ static void OnItemReceived(long long apItemId) {
     }
     if (offset < 0) { Log("Item %lld out of range (skipped)", apItemId); return; }
 
+    // "from <player>" only when someone else found it (not our own location).
+    char from[96] = "";
+    if (finder >= 0 && finder != g_slotNumber)
+        snprintf(from, sizeof(from), "  (from %s)", PlayerName(finder).c_str());
+
     const char* name = GetPartName((int)offset);
     if (name) {
-        Log("Queuing: %s", name);
-        Overlay_Message(OVL_RECEIVED, "Received  %s", name);
+        Log("Queuing: %s%s", name, from);
+        Overlay_Message(OVL_RECEIVED, "Received  %s%s", name, from);
     } else {
         Log("Queuing unknown part 0x%X", (unsigned int)offset);
-        Overlay_Message(OVL_RECEIVED, "Received  part 0x%X", (unsigned int)offset);
+        Overlay_Message(OVL_RECEIVED, "Received  part 0x%X%s", (unsigned int)offset, from);
     }
 
     QueueGrant((int)offset);
@@ -239,14 +285,36 @@ static void HandleReceivedItems(const std::string& msg) {
     long long pos = startIndex;
     long long itemId;
     while (ExtractNextInt(msg, "item", scan, itemId)) {
+        // "player" (the finder) follows "item" in the same NetworkItem object.
+        long long finder = -1; size_t fs = scan;
+        ExtractNextInt(msg, "player", fs, finder);
         if (pos >= g_processedItemCount) {
-            OnItemReceived(itemId);
+            OnItemReceived(itemId, (int)finder);
             g_processedItemCount = (int)(pos + 1);
             SaveReceiveState();
         }
         pos++;
     }
     Log("ReceivedItems processed up to %d", g_processedItemCount);
+}
+
+// A PrintJSON "ItemSend" line: announce items WE found that go to someone else.
+// Shape: ...,"type":"ItemSend","receiving":<recv>,"item":{"item":..,"location":..,
+//        "player":<finder>,..}. We are the finder for things we send out.
+static void HandleItemSend(const std::string& msg) {
+    size_t t = 0; long long recv = -1;
+    ExtractNextInt(msg, "receiving", t, recv);
+
+    size_t ip = msg.find("\"item\":{");
+    if (ip == std::string::npos) return;
+    size_t s = ip + strlen("\"item\":{");
+    long long itemId = -1, locId = -1, finder = -1;
+    ExtractNextInt(msg, "item", s, itemId);
+    ExtractNextInt(msg, "location", s, locId);
+    ExtractNextInt(msg, "player", s, finder);
+
+    if (finder == g_slotNumber && recv >= 0 && recv != g_slotNumber)
+        Overlay_Message(OVL_SENT, "Sent to %s", PlayerName((int)recv).c_str());
 }
 
 // ===========================================================================
@@ -278,6 +346,7 @@ static void HandleMessage(const std::string& msg) {
         if (ExtractNextInt(msg, "run_mode", rm, mode)) g_runMode = (int)mode;
         Log("Run mode: %d (0=single 1=ng+ 2=ng+cycled 3=full 4=full-cycled)", g_runMode);
 
+        ParseConnectedPlayers(msg);   // slot -> name, for "from/to" overlay text
         LoadReceiveState();
         LoadCycle();
     }
@@ -285,6 +354,11 @@ static void HandleMessage(const std::string& msg) {
     // ReceivedItems -> grant
     if (msg.find("\"cmd\":\"ReceivedItems\"") != std::string::npos) {
         HandleReceivedItems(msg);
+    }
+
+    // Item we found that goes to another player -> "Sent to <player>"
+    if (msg.find("\"type\":\"ItemSend\"") != std::string::npos) {
+        HandleItemSend(msg);
     }
 }
 
