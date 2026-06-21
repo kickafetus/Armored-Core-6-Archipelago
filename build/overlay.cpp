@@ -48,7 +48,8 @@ HWND                g_hwnd   = nullptr;
 HFONT               g_font   = nullptr;
 HDC                 g_memDC  = nullptr;   // cached back buffer
 HBITMAP             g_memBmp = nullptr;
-HBRUSH              g_keyBr  = nullptr;
+HBRUSH              g_keyBr  = nullptr;   // magenta = transparent
+HBRUSH              g_panBr  = nullptr;   // dark backing panel
 HWND                g_game   = nullptr;   // cached game window (may be null)
 
 COLORREF KindColor(AC6OverlayKind k) {
@@ -100,17 +101,31 @@ void Render() {
     SetWindowPos(g_hwnd, nullptr, x, y, kWidth, kHeight,
                  SWP_NOZORDER | SWP_NOACTIVATE);
 
-    // Paint the back buffer: magenta everywhere (transparent), shadowed text.
+    // Magenta everywhere (transparent), then an opaque dark panel sized to the
+    // text, then the text on top. The window-wide LWA_ALPHA keeps the panel a
+    // touch translucent; only the panel area is visible (magenta is keyed out).
     RECT full{ 0, 0, kWidth, kHeight };
     FillRect(g_memDC, &full, g_keyBr);
-    SetBkMode(g_memDC, TRANSPARENT);
-    int ty = kPadY;
-    for (int i = 0; i < n; i++) {
-        SetTextColor(g_memDC, RGB(0, 0, 0));
-        TextOutW(g_memDC, kPadX + 1, ty + 1, live[i].text.c_str(), (int)live[i].text.size());
-        SetTextColor(g_memDC, live[i].color);
-        TextOutW(g_memDC, kPadX, ty, live[i].text.c_str(), (int)live[i].text.size());
-        ty += kLineH;
+
+    if (n > 0) {
+        int maxW = 0;
+        for (int i = 0; i < n; i++) {
+            SIZE sz;
+            GetTextExtentPoint32W(g_memDC, live[i].text.c_str(),
+                                  (int)live[i].text.size(), &sz);
+            if (sz.cx > maxW) maxW = sz.cx;
+        }
+        RECT panel{ 0, 0, (maxW + kPadX * 2 > kWidth) ? kWidth : maxW + kPadX * 2,
+                    n * kLineH + kPadY * 2 };
+        FillRect(g_memDC, &panel, g_panBr);
+
+        SetBkMode(g_memDC, TRANSPARENT);
+        int ty = kPadY;
+        for (int i = 0; i < n; i++) {
+            SetTextColor(g_memDC, live[i].color);
+            TextOutW(g_memDC, kPadX, ty, live[i].text.c_str(), (int)live[i].text.size());
+            ty += kLineH;
+        }
     }
 
     HDC wdc = GetDC(g_hwnd);
@@ -127,6 +142,7 @@ LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 
 void ThreadMain() {
     g_keyBr = CreateSolidBrush(kKey);
+    g_panBr = CreateSolidBrush(RGB(16, 16, 22));   // dark backing panel
 
     WNDCLASSEXW wc{};
     wc.cbSize        = sizeof(wc);
@@ -143,11 +159,13 @@ void ThreadMain() {
         40, 40, kWidth, kHeight, nullptr, nullptr, wc.hInstance, nullptr);
     if (!g_hwnd) { Log("Overlay: CreateWindowEx failed (%lu)", GetLastError()); return; }
 
-    SetLayeredWindowAttributes(g_hwnd, kKey, 0, LWA_COLORKEY);
+    // Magenta keyed transparent; everything else (the dark panel + text) at a
+    // high constant alpha so the panel is opaque enough to read over the game.
+    SetLayeredWindowAttributes(g_hwnd, kKey, 236, LWA_COLORKEY | LWA_ALPHA);
 
     g_font = CreateFontW(-17, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
                          DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
-                         NONANTIALIASED_QUALITY, FF_DONTCARE, L"Segoe UI");
+                         ANTIALIASED_QUALITY, FF_DONTCARE, L"Segoe UI");
 
     HDC screen = GetDC(nullptr);
     g_memDC  = CreateCompatibleDC(screen);
@@ -175,6 +193,7 @@ void ThreadMain() {
     if (g_font)   { DeleteObject(g_font);   g_font   = nullptr; }
     if (g_hwnd)   { DestroyWindow(g_hwnd);  g_hwnd   = nullptr; }
     if (g_keyBr)  { DeleteObject(g_keyBr);  g_keyBr  = nullptr; }
+    if (g_panBr)  { DeleteObject(g_panBr);  g_panBr  = nullptr; }
     UnregisterClassW(kClassName, GetModuleHandleW(nullptr));
 }
 
