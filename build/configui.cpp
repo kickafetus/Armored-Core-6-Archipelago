@@ -21,7 +21,7 @@ constexpr wchar_t kClass[] = L"AC6AP_Settings";
 enum { IDC_HOST = 1001, IDC_PORT, IDC_SLOT, IDC_PASS, IDC_CONNECT, IDC_STATUS };
 enum { WM_TOGGLE = WM_APP + 1 };
 
-constexpr int kW = 400, kH = 250;
+constexpr int kW = 400, kH = 296;
 const COLORREF kBg   = RGB(14, 14, 18);     // panel
 const COLORREF kEdit = RGB(34, 34, 42);     // field
 const COLORREF kFg   = RGB(232, 232, 238);   // text
@@ -107,18 +107,19 @@ void BuildControls(HWND h) {
                             OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
                             FF_DONTCARE, L"Segoe UI");
 
-    HWND hdr = Label(h, L"Archipelago", 12, kFg, 18, 360);
-    Label(h, L"Host", 52, kFg);     g_eHost = Edit(h, IDC_HOST, 50, g_iHost, false);
-    Label(h, L"Port", 84, kFg);     g_ePort = Edit(h, IDC_PORT, 82, g_iPort, false);
-    Label(h, L"Slot", 116, kFg);    g_eSlot = Edit(h, IDC_SLOT, 114, g_iSlot, false);
-    Label(h, L"Password", 148, kFg);g_ePass = Edit(h, IDC_PASS, 146, g_iPass, true);
+    HWND hdr = CreateWindowExW(0, L"STATIC", L"Archipelago", WS_CHILD | WS_VISIBLE,
+                               18, 20, 240, 30, h, nullptr, nullptr, nullptr);
+    CreateWindowExW(0, L"STATIC", L"F8 to close",
+                    WS_CHILD | WS_VISIBLE | SS_RIGHT, kW - 150, 26, 132, 18, h,
+                    nullptr, nullptr, nullptr);
+    Label(h, L"Host", 68, kFg);     g_eHost = Edit(h, IDC_HOST, 68, g_iHost, false);
+    Label(h, L"Port", 102, kFg);    g_ePort = Edit(h, IDC_PORT, 102, g_iPort, false);
+    Label(h, L"Slot", 136, kFg);    g_eSlot = Edit(h, IDC_SLOT, 136, g_iSlot, false);
+    Label(h, L"Password", 170, kFg);g_ePass = Edit(h, IDC_PASS, 170, g_iPass, true);
     CreateWindowExW(0, L"BUTTON", L"Connect",
                     WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-                    104, 180, 130, 32, h, (HMENU)IDC_CONNECT, nullptr, nullptr);
-    g_status = Label(h, L"Disconnected", 218, kFg, 18, 364);
-    CreateWindowExW(0, L"STATIC", L"F8 to close",
-                    WS_CHILD | WS_VISIBLE | SS_RIGHT, 250, 15, 132, 18, h,
-                    nullptr, nullptr, nullptr);
+                    104, 210, 130, 32, h, (HMENU)IDC_CONNECT, nullptr, nullptr);
+    g_status = Label(h, L"Disconnected", 256, kFg, 18, 364);
 
     // All controls get the body font, then the header overrides to the big one.
     EnumChildWindows(h, [](HWND c, LPARAM lp) -> BOOL {
