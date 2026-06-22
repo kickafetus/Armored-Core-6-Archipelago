@@ -19,6 +19,7 @@
 #include "partnames.h"
 #include "allparts.h"
 #include "overlay.h"
+#include "configui.h"
 
 #define AC6AP_VERSION "v0.1.3-Beta"
 
@@ -112,6 +113,47 @@ static AC6Config LoadConfig(const std::string& path) {
     Log("Config loaded: host=%s port=%s slot=%s",
         cfg.host.c_str(), cfg.port.c_str(), cfg.slot.c_str());
     return cfg;
+}
+
+// Live config + path, so the in-game settings UI can persist + reconnect.
+static AC6Config  g_cfg;
+static std::string g_cfgPath;
+
+// archipelago.gg needs secure wss://; everything else (localhost, IPs) uses ws://.
+static std::string BuildUri(const std::string& host, const std::string& port) {
+    std::string scheme = (host.find("archipelago.gg") != std::string::npos)
+        ? "wss://" : "ws://";
+    return scheme + host + ":" + port;
+}
+
+// Rewrite ac6ap.cfg from g_cfg (keeps the dev toggles as they were loaded).
+static void SaveConfig() {
+    if (g_cfgPath.empty()) return;
+    std::ofstream out(g_cfgPath);
+    if (!out.is_open()) { Log("SaveConfig: could not write %s", g_cfgPath.c_str()); return; }
+    out << "# Armored Core VI Archipelago - connection settings.\n"
+        << "# Edited in-game via the F8 settings window (or by hand).\n"
+        << "host=" << g_cfg.host << "\n"
+        << "port=" << g_cfg.port << "\n"
+        << "slot=" << g_cfg.slot << "\n"
+        << "password=" << g_cfg.password << "\n\n"
+        << "# Dev/debug toggles\n"
+        << "discover=" << (g_cfg.discover ? 1 : 0) << "\n"
+        << "grant_all_parts=" << (g_cfg.grantAllParts ? 1 : 0) << "\n"
+        << "overlay=" << (g_cfg.overlay ? 1 : 0) << "\n";
+    Log("Config saved to %s", g_cfgPath.c_str());
+}
+
+void AC6_ApplyConnection(const char* host, const char* port,
+                         const char* slot, const char* password) {
+    g_cfg.host = host ? host : "";
+    g_cfg.port = port ? port : "";
+    g_cfg.slot = slot ? slot : "";
+    g_cfg.password = password ? password : "";
+    SaveConfig();
+    std::string uri = BuildUri(g_cfg.host, g_cfg.port);
+    Log("Applying connection: %s as %s", uri.c_str(), g_cfg.slot.c_str());
+    APClient_Reconnect(uri.c_str(), g_cfg.slot.c_str(), g_cfg.password.c_str());
 }
 
 // ===========================================================================
@@ -285,6 +327,17 @@ static void GrantAllPartsThread(void*) {
     }
 }
 
+// F8 toggles the in-game Archipelago settings window (connect / change room).
+static void SettingsHotkeyThread(void*) {
+    bool last = false;
+    while (true) {
+        bool pressed = (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
+        if (pressed && !last) ConfigUI_Toggle();
+        last = pressed;
+        Sleep(50);
+    }
+}
+
 // ===========================================================================
 //  Main worker thread
 // ===========================================================================
@@ -336,7 +389,9 @@ static void MainThread(void*) {
     _beginthread(GrantDrainThread, 0, nullptr);
 
     // Load connection settings from ac6ap.cfg, then connect.
-    AC6Config cfg = LoadConfig(GetDllDir() + "ac6ap.cfg");
+    g_cfgPath = GetDllDir() + "ac6ap.cfg";
+    AC6Config cfg = LoadConfig(g_cfgPath);
+    g_cfg = cfg;
 
     // Optional: F7 hotkey to unlock the whole garage (works in any mode).
     if (cfg.grantAllParts) {
@@ -353,9 +408,7 @@ static void MainThread(void*) {
         return;
     }
 
-    std::string scheme = (cfg.host.find("archipelago.gg") != std::string::npos)
-        ? "wss://" : "ws://";
-    std::string uri = scheme + cfg.host + ":" + cfg.port;
+    std::string uri = BuildUri(cfg.host, cfg.port);
     APClient_Connect(uri.c_str(), cfg.slot.c_str(), cfg.password.c_str());
 
     // Start watching flags.
@@ -366,6 +419,11 @@ static void MainThread(void*) {
         Overlay_Start();
         Overlay_Message(OVL_INFO, "Armored Core VI Archipelago connected");
     }
+
+    // In-game settings window (F8) to connect / change room without a restart.
+    ConfigUI_Start(cfg.host.c_str(), cfg.port.c_str(),
+                   cfg.slot.c_str(), cfg.password.c_str());
+    _beginthread(SettingsHotkeyThread, 0, nullptr);
 
     Log("Setup complete. Watching flags and granting received items.");
 
@@ -387,6 +445,7 @@ static void OnLoad() {
 }
 
 static void OnUnload() {
+    ConfigUI_Stop();
     Overlay_Stop();
     FlagWatcher_Stop();
     APClient_Disconnect();

@@ -157,6 +157,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="apclient.h" />
+    <ClInclude Include="configui.h" />
     <ClInclude Include="dllmain.h" />
     <ClInclude Include="flagwatcher.h" />
     <ClInclude Include="flagwriter.h" />
@@ -170,6 +171,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="apclient.cpp" />
+    <ClCompile Include="configui.cpp" />
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="flagwatcher.cpp" />
     <ClCompile Include="flagwriter.cpp" />

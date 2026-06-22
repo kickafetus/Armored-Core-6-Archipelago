@@ -4,6 +4,12 @@
 
 void APClient_Connect(const char* uri, const char* slot, const char* password);
 void APClient_Disconnect();
+
+// Live (re)connect with new settings - no game restart. Updates the target and
+// recycles the socket; starts the client thread if it isn't running yet.
+void APClient_Reconnect(const char* uri, const char* slot, const char* password);
+// Short human-readable connection state for the settings UI.
+std::string APClient_StatusText();
 void APClient_SendCheck(int64_t locationId);
 void APClient_SendGoal();
 
