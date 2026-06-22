@@ -18,7 +18,7 @@
 namespace {
 
 constexpr wchar_t kClass[] = L"AC6AP_Settings";
-enum { IDC_HOST = 1001, IDC_PORT, IDC_SLOT, IDC_PASS, IDC_CONNECT, IDC_DISCONNECT, IDC_STATUS };
+enum { IDC_HOST = 1001, IDC_PORT, IDC_SLOT, IDC_PASS, IDC_TOGGLE, IDC_STATUS };
 enum { WM_TOGGLE = WM_APP + 1 };
 
 constexpr int kW = 400, kH = 296;
@@ -31,8 +31,8 @@ const COLORREF kHint = RGB(150, 150, 160);
 std::atomic<bool> g_running{ false };
 std::thread       g_thread;
 HWND g_wnd = nullptr, g_eHost = nullptr, g_ePort = nullptr,
-     g_eSlot = nullptr, g_ePass = nullptr, g_status = nullptr,
-     g_btnConn = nullptr, g_btnDisc = nullptr;
+     g_eSlot = nullptr, g_ePass = nullptr, g_status = nullptr, g_btn = nullptr;
+int  g_lastState = -1;   // last connection state reflected on the button
 HBRUSH g_bgBr = nullptr, g_editBr = nullptr;
 HFONT  g_font = nullptr, g_fontHdr = nullptr;
 std::wstring g_iHost, g_iPort, g_iSlot, g_iPass;
@@ -117,12 +117,9 @@ void BuildControls(HWND h) {
     Label(h, L"Port", 102, kFg);    g_ePort = Edit(h, IDC_PORT, 102, g_iPort, false);
     Label(h, L"Slot", 136, kFg);    g_eSlot = Edit(h, IDC_SLOT, 136, g_iSlot, false);
     Label(h, L"Password", 170, kFg);g_ePass = Edit(h, IDC_PASS, 170, g_iPass, true);
-    g_btnConn = CreateWindowExW(0, L"BUTTON", L"Connect",
+    g_btn = CreateWindowExW(0, L"BUTTON", L"Connect",
                     WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-                    104, 210, 120, 32, h, (HMENU)IDC_CONNECT, nullptr, nullptr);
-    g_btnDisc = CreateWindowExW(0, L"BUTTON", L"Disconnect",
-                    WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
-                    232, 210, 120, 32, h, (HMENU)IDC_DISCONNECT, nullptr, nullptr);
+                    115, 210, 170, 32, h, (HMENU)IDC_TOGGLE, nullptr, nullptr);
     g_status = Label(h, L"Disconnected", 256, kFg, 18, 364);
 
     // All controls get the body font, then the header overrides to the big one.
@@ -130,6 +127,19 @@ void BuildControls(HWND h) {
         SendMessageW(c, WM_SETFONT, (WPARAM)lp, TRUE); return TRUE;
     }, (LPARAM)g_font);
     SendMessageW(hdr, WM_SETFONT, (WPARAM)g_fontHdr, TRUE);
+}
+
+// One button that reflects the connection: "Connect" when disconnected,
+// "Connecting..." (greyed) while connecting, "Disconnect" once connected.
+void SyncButton() {
+    if (!g_btn) return;
+    int st = APClient_State();
+    if (st == g_lastState) return;
+    g_lastState = st;
+    SetWindowTextW(g_btn, st == AP_CONNECTED  ? L"Disconnect"
+                        : st == AP_CONNECTING ? L"Connecting..."
+                                              : L"Connect");
+    EnableWindow(g_btn, st != AP_CONNECTING);   // grey out while connecting
 }
 
 LRESULT CALLBACK Proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
@@ -166,28 +176,22 @@ LRESULT CALLBACK Proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     }
 
     case WM_COMMAND:
-        if (LOWORD(wp) == IDC_CONNECT) {
-            std::string host = ToA(GetText(g_eHost)), port = ToA(GetText(g_ePort));
-            std::string slot = ToA(GetText(g_eSlot)), pass = ToA(GetText(g_ePass));
-            AC6_ApplyConnection(host.c_str(), port.c_str(), slot.c_str(), pass.c_str());
-            EnableWindow(g_btnConn, FALSE);     // grey out immediately while connecting
-            EnableWindow(g_btnDisc, TRUE);
-            SetWindowTextW(g_status, L"Connecting...");
-        } else if (LOWORD(wp) == IDC_DISCONNECT) {
-            APClient_Disconnect();
-            EnableWindow(g_btnDisc, FALSE);
-            EnableWindow(g_btnConn, TRUE);
-            SetWindowTextW(g_status, L"Disconnected");
+        if (LOWORD(wp) == IDC_TOGGLE) {
+            if (APClient_State() == AP_CONNECTED) {
+                APClient_Disconnect();
+            } else {                              // disconnected (connecting is greyed)
+                std::string host = ToA(GetText(g_eHost)), port = ToA(GetText(g_ePort));
+                std::string slot = ToA(GetText(g_eSlot)), pass = ToA(GetText(g_ePass));
+                AC6_ApplyConnection(host.c_str(), port.c_str(), slot.c_str(), pass.c_str());
+            }
+            SyncButton();                         // instant feedback (e.g. grey out)
         }
         return 0;
 
-    case WM_TIMER: {
-        int st = APClient_State();
-        EnableWindow(g_btnConn, st != AP_CONNECTING);    // grey while connecting
-        EnableWindow(g_btnDisc, st != AP_DISCONNECTED);  // only when there's a link
+    case WM_TIMER:
+        SyncButton();
         if (g_status) SetWindowTextW(g_status, ToW(APClient_StatusText().c_str()).c_str());
         return 0;
-    }
 
     case WM_TOGGLE:
         if (IsWindowVisible(h)) {
