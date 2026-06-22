@@ -3,13 +3,17 @@
 #include "apclient.h"   // APClient_StatusText()
 
 #include <windows.h>
+#include <uxtheme.h>
 #include <thread>
 #include <atomic>
 #include <string>
 
-// A small dialog-style window with Host/Port/Slot/Password fields and a Connect
-// button. Runs on its own thread with a normal message loop. Hidden until the
-// hotkey toggles it; closing (X) hides rather than destroys.
+#pragma comment(lib, "uxtheme.lib")
+
+// A dark, borderless, top-most panel drawn over the game (no window chrome),
+// toggled by F8. It is a real window so it can take keyboard focus for the
+// fields, but visually it sits on the game like the message overlay. Shows in
+// borderless/windowed mode.
 
 namespace {
 
@@ -17,11 +21,20 @@ constexpr wchar_t kClass[] = L"AC6AP_Settings";
 enum { IDC_HOST = 1001, IDC_PORT, IDC_SLOT, IDC_PASS, IDC_CONNECT, IDC_STATUS };
 enum { WM_TOGGLE = WM_APP + 1 };
 
+constexpr int kW = 400, kH = 250;
+const COLORREF kBg   = RGB(14, 14, 18);     // panel
+const COLORREF kEdit = RGB(34, 34, 42);     // field
+const COLORREF kFg   = RGB(232, 232, 238);   // text
+const COLORREF kBtn  = RGB(48, 60, 80);      // button
+const COLORREF kHint = RGB(150, 150, 160);
+
 std::atomic<bool> g_running{ false };
 std::thread       g_thread;
 HWND g_wnd = nullptr, g_eHost = nullptr, g_ePort = nullptr,
      g_eSlot = nullptr, g_ePass = nullptr, g_status = nullptr;
-std::wstring g_iHost, g_iPort, g_iSlot, g_iPass;   // initial field values
+HBRUSH g_bgBr = nullptr, g_editBr = nullptr;
+HFONT  g_font = nullptr, g_fontHdr = nullptr;
+std::wstring g_iHost, g_iPort, g_iSlot, g_iPass;
 
 std::wstring ToW(const char* s) {
     if (!s) return L"";
@@ -44,38 +57,105 @@ std::wstring GetText(HWND h) {
     return w;
 }
 
-HWND Label(HWND p, const wchar_t* t, int y) {
+// Largest visible owner-less window of this process = the game window. Only
+// non-blocking calls (no message is sent to any window).
+HWND FindGameWindow() {
+    struct C { HWND hwnd; long area; } c{ nullptr, 0 };
+    EnumWindows([](HWND h, LPARAM lp) -> BOOL {
+        if (h == g_wnd) return TRUE;
+        DWORD pid = 0; GetWindowThreadProcessId(h, &pid);
+        if (pid != GetCurrentProcessId() || !IsWindowVisible(h) ||
+            GetWindow(h, GW_OWNER)) return TRUE;
+        RECT r; if (!GetWindowRect(h, &r)) return TRUE;
+        long a = (r.right - r.left) * (long)(r.bottom - r.top);
+        auto* c = reinterpret_cast<C*>(lp);
+        if (a > c->area) { c->area = a; c->hwnd = h; }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&c));
+    return c.hwnd;
+}
+
+void CenterOverGame() {
+    int x = (GetSystemMetrics(SM_CXSCREEN) - kW) / 2;
+    int y = (GetSystemMetrics(SM_CYSCREEN) - kH) / 2;
+    HWND g = FindGameWindow();
+    RECT r;
+    if (g && GetWindowRect(g, &r)) {
+        x = r.left + ((r.right - r.left) - kW) / 2;
+        y = r.top + ((r.bottom - r.top) - kH) / 2;
+    }
+    SetWindowPos(g_wnd, HWND_TOPMOST, x, y, kW, kH, SWP_NOACTIVATE);
+}
+
+HWND Label(HWND p, const wchar_t* t, int y, COLORREF, int x = 18, int w = 80) {
     return CreateWindowExW(0, L"STATIC", t, WS_CHILD | WS_VISIBLE,
-                           12, y + 2, 74, 20, p, nullptr, nullptr, nullptr);
+                           x, y + 3, w, 20, p, nullptr, nullptr, nullptr);
 }
 HWND Edit(HWND p, int id, int y, const std::wstring& val, bool password) {
     DWORD st = WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL | (password ? ES_PASSWORD : 0);
-    return CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", val.c_str(), st,
-                           92, y, 252, 23, p, (HMENU)(INT_PTR)id, nullptr, nullptr);
+    HWND e = CreateWindowExW(0, L"EDIT", val.c_str(), st,
+                             104, y, 278, 24, p, (HMENU)(INT_PTR)id, nullptr, nullptr);
+    SetWindowTheme(e, L"", L"");   // classic rendering so WM_CTLCOLOREDIT applies
+    return e;
 }
-void ApplyGuiFont(HWND h) {
-    HFONT f = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+
+void BuildControls(HWND h) {
+    g_font    = CreateFontW(-16, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+                            OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                            FF_DONTCARE, L"Segoe UI");
+    g_fontHdr = CreateFontW(-20, 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET,
+                            OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                            FF_DONTCARE, L"Segoe UI");
+
+    HWND hdr = Label(h, L"Archipelago", 12, kFg, 18, 360);
+    Label(h, L"Host", 52, kFg);     g_eHost = Edit(h, IDC_HOST, 50, g_iHost, false);
+    Label(h, L"Port", 84, kFg);     g_ePort = Edit(h, IDC_PORT, 82, g_iPort, false);
+    Label(h, L"Slot", 116, kFg);    g_eSlot = Edit(h, IDC_SLOT, 114, g_iSlot, false);
+    Label(h, L"Password", 148, kFg);g_ePass = Edit(h, IDC_PASS, 146, g_iPass, true);
+    CreateWindowExW(0, L"BUTTON", L"Connect",
+                    WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                    104, 180, 130, 32, h, (HMENU)IDC_CONNECT, nullptr, nullptr);
+    g_status = Label(h, L"Disconnected", 218, kFg, 18, 364);
+    CreateWindowExW(0, L"STATIC", L"F8 to close",
+                    WS_CHILD | WS_VISIBLE | SS_RIGHT, 250, 15, 132, 18, h,
+                    nullptr, nullptr, nullptr);
+
+    // All controls get the body font, then the header overrides to the big one.
     EnumChildWindows(h, [](HWND c, LPARAM lp) -> BOOL {
         SendMessageW(c, WM_SETFONT, (WPARAM)lp, TRUE); return TRUE;
-    }, (LPARAM)f);
+    }, (LPARAM)g_font);
+    SendMessageW(hdr, WM_SETFONT, (WPARAM)g_fontHdr, TRUE);
 }
 
 LRESULT CALLBACK Proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
     switch (m) {
     case WM_CREATE:
-        Label(h, L"Host", 14);     g_eHost = Edit(h, IDC_HOST, 12, g_iHost, false);
-        Label(h, L"Port", 46);     g_ePort = Edit(h, IDC_PORT, 44, g_iPort, false);
-        Label(h, L"Slot", 78);     g_eSlot = Edit(h, IDC_SLOT, 76, g_iSlot, false);
-        Label(h, L"Password", 110);g_ePass = Edit(h, IDC_PASS, 108, g_iPass, true);
-        CreateWindowExW(0, L"BUTTON", L"Connect",
-                        WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-                        92, 144, 120, 30, h, (HMENU)IDC_CONNECT, nullptr, nullptr);
-        g_status = CreateWindowExW(0, L"STATIC", L"Disconnected",
-                        WS_CHILD | WS_VISIBLE, 12, 186, 332, 20, h,
-                        (HMENU)IDC_STATUS, nullptr, nullptr);
-        ApplyGuiFont(h);
+        BuildControls(h);
         SetTimer(h, 1, 500, nullptr);
         return 0;
+
+    case WM_CTLCOLORSTATIC:
+    case WM_CTLCOLOREDIT: {
+        HDC dc = (HDC)wp;
+        SetTextColor(dc, kFg);
+        SetBkColor(dc, m == WM_CTLCOLOREDIT ? kEdit : kBg);
+        return (LRESULT)(m == WM_CTLCOLOREDIT ? g_editBr : g_bgBr);
+    }
+
+    case WM_DRAWITEM: {
+        auto* d = (DRAWITEMSTRUCT*)lp;
+        HBRUSH b = CreateSolidBrush((d->itemState & ODS_SELECTED) ? RGB(70, 90, 120) : kBtn);
+        FillRect(d->hDC, &d->rcItem, b);
+        DeleteObject(b);
+        FrameRect(d->hDC, &d->rcItem, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        SetBkMode(d->hDC, TRANSPARENT);
+        SetTextColor(d->hDC, kFg);
+        HFONT old = (HFONT)SelectObject(d->hDC, g_font);
+        DrawTextW(d->hDC, L"Connect", -1, &d->rcItem,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(d->hDC, old);
+        return TRUE;
+    }
 
     case WM_COMMAND:
         if (LOWORD(wp) == IDC_CONNECT) {
@@ -87,21 +167,19 @@ LRESULT CALLBACK Proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
         return 0;
 
     case WM_TIMER:
-        if (g_status) SetWindowTextW(g_status, ToW(APClient_StatusText().c_str()).c_str());
+        if (g_status && IsWindowVisible(h))
+            SetWindowTextW(g_status, ToW(APClient_StatusText().c_str()).c_str());
         return 0;
 
     case WM_TOGGLE:
         if (IsWindowVisible(h)) {
             ShowWindow(h, SW_HIDE);
         } else {
+            CenterOverGame();
             ShowWindow(h, SW_SHOW);
             SetForegroundWindow(h);
             SetFocus(g_eHost);
         }
-        return 0;
-
-    case WM_CLOSE:                 // X button hides; we keep the window alive
-        ShowWindow(h, SW_HIDE);
         return 0;
 
     case WM_DESTROY:
@@ -113,21 +191,21 @@ LRESULT CALLBACK Proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
 }
 
 void ThreadMain() {
+    g_bgBr   = CreateSolidBrush(kBg);
+    g_editBr = CreateSolidBrush(kEdit);
+
     WNDCLASSEXW wc{};
     wc.cbSize        = sizeof(wc);
     wc.lpfnWndProc   = Proc;
     wc.hInstance     = GetModuleHandleW(nullptr);
     wc.lpszClassName = kClass;
     wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.hbrBackground = g_bgBr;
     RegisterClassExW(&wc);
 
-    RECT r{ 0, 0, 360, 224 };
-    AdjustWindowRect(&r, WS_CAPTION | WS_SYSMENU, FALSE);
-    g_wnd = CreateWindowExW(WS_EX_TOPMOST, kClass, L"Archipelago - Armored Core VI",
-                            WS_CAPTION | WS_SYSMENU | WS_POPUP,
-                            140, 140, r.right - r.left, r.bottom - r.top,
-                            nullptr, nullptr, wc.hInstance, nullptr);
+    g_wnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, kClass,
+                            L"Archipelago", WS_POPUP,
+                            200, 200, kW, kH, nullptr, nullptr, wc.hInstance, nullptr);
     if (!g_wnd) { Log("ConfigUI: CreateWindow failed (%lu)", GetLastError()); return; }
     Log("ConfigUI ready - press F8 in-game to open Archipelago settings");
 
@@ -136,6 +214,11 @@ void ThreadMain() {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+
+    if (g_font)    DeleteObject(g_font);
+    if (g_fontHdr) DeleteObject(g_fontHdr);
+    if (g_bgBr)    DeleteObject(g_bgBr);
+    if (g_editBr)  DeleteObject(g_editBr);
     g_wnd = nullptr;
 }
 
