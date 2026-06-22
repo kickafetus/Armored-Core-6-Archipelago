@@ -338,6 +338,43 @@ static void SettingsHotkeyThread(void*) {
     }
 }
 
+// The game's main window: the largest owner-less top-level window of THIS
+// process that isn't one of our own overlay/settings windows. Visibility is
+// ignored (a minimised game still counts); uses no blocking calls.
+static HWND FindGameMainWindow() {
+    struct C { HWND hwnd; long area; } ctx{ nullptr, 0 };
+    EnumWindows([](HWND h, LPARAM lp) -> BOOL {
+        DWORD pid = 0; GetWindowThreadProcessId(h, &pid);
+        if (pid != GetCurrentProcessId() || GetWindow(h, GW_OWNER)) return TRUE;
+        wchar_t cls[64]; GetClassNameW(h, cls, 64);
+        if (lstrcmpiW(cls, L"AC6AP_Settings") == 0 ||
+            lstrcmpiW(cls, L"AC6AP_Overlay") == 0) return TRUE;
+        RECT r; if (!GetWindowRect(h, &r)) return TRUE;
+        long a = (long)(r.right - r.left) * (r.bottom - r.top);
+        auto* c = reinterpret_cast<C*>(lp);
+        if (a > c->area) { c->area = a; c->hwnd = h; }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&ctx));
+    return ctx.hwnd;
+}
+
+// If the game window is gone for a few seconds, the game has closed but our
+// threads are keeping the process (and its overlay/settings windows) alive, so
+// end the process.
+static void WatchdogThread(void*) {
+    while (!FindGameMainWindow()) Sleep(1000);   // wait for the game window
+    Log("Watchdog: tracking game window for shutdown.");
+    int misses = 0;
+    while (true) {
+        Sleep(1000);
+        if (FindGameMainWindow()) misses = 0;
+        else if (++misses >= 4) {
+            Log("Game window gone - exiting process.");
+            ExitProcess(0);
+        }
+    }
+}
+
 // ===========================================================================
 //  Main worker thread
 // ===========================================================================
@@ -387,6 +424,10 @@ static void MainThread(void*) {
     // Start the grant drain thread.
     g_grantThreadRunning = true;
     _beginthread(GrantDrainThread, 0, nullptr);
+
+    // End the process when the game closes (our threads/windows would otherwise
+    // keep armoredcore6.exe alive). Covers every mode, including discovery.
+    _beginthread(WatchdogThread, 0, nullptr);
 
     // Load connection settings from ac6ap.cfg, then connect.
     g_cfgPath = GetDllDir() + "ac6ap.cfg";
