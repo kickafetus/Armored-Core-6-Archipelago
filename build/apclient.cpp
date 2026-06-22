@@ -36,6 +36,7 @@ static WebSocket::pointer g_ws = nullptr;
 
 static std::string g_uri, g_slot, g_password;
 static std::mutex         g_connMutex;          // guards g_uri/g_slot/g_password
+static std::atomic<bool>  g_wantConnect{ false };// should we maintain a connection
 static std::atomic<bool>  g_forceReconnect{ false };
 static std::atomic<bool>  g_wsOpen{ false };     // socket connected
 static std::atomic<bool>  g_apConnected{ false };// AP "Connected" received
@@ -548,29 +549,38 @@ static void HandleMessage(const std::string& msg) {
 //  Websocket thread
 // ===========================================================================
 
+// The thread is persistent for the life of the DLL; whether it actually holds a
+// connection is gated on g_wantConnect, so Connect/Disconnect/Reconnect never
+// start or stop the thread (no restart races).
 static void APThread() {
     Log("AP thread started");
 
     while (g_apRunning) {
+        if (!g_wantConnect) {            // idle until something asks to connect
+            g_wsOpen = false; g_apConnected = false;
+            Sleep(200);
+            continue;
+        }
+
         std::string uri;
         { std::lock_guard<std::mutex> lk(g_connMutex); uri = g_uri; }
         if (uri.empty()) { Sleep(200); continue; }
 
         g_wsOpen = false; g_apConnected = false;
-        g_forceReconnect = false;   // clear any stale request before we connect
+        g_forceReconnect = false;
 
-        // from_url blocks during the TCP connect; null on failure.
-        g_ws = WebSocket::from_url(uri);
+        g_ws = WebSocket::from_url(uri);   // blocks during the TCP connect
         if (!g_ws) {
             Log("AP: connect failed, retrying...");
-            for (int i = 0; i < 50 && g_apRunning && !g_forceReconnect; i++) Sleep(100);
+            for (int i = 0; i < 50 && g_apRunning && g_wantConnect && !g_forceReconnect; i++)
+                Sleep(100);
             continue;
         }
         g_wsOpen = true;
         Log("AP: connected to %s", uri.c_str());
 
         bool forced = false;
-        while (g_apRunning && g_ws->getReadyState() != WebSocket::CLOSED) {
+        while (g_apRunning && g_wantConnect && g_ws->getReadyState() != WebSocket::CLOSED) {
             if (g_forceReconnect.exchange(false)) { forced = true; break; }
             {
                 std::lock_guard<std::mutex> lk(g_sendMutex);
@@ -586,9 +596,13 @@ static void APThread() {
 
         g_wsOpen = false; g_apConnected = false;
         if (g_ws) { delete g_ws; g_ws = nullptr; }
-        Log(forced ? "AP: reconnecting (settings changed)" : "AP: connection lost");
-        if (g_apRunning && !forced)         // brief backoff only on an unexpected drop
-            for (int i = 0; i < 30 && g_apRunning && !g_forceReconnect; i++) Sleep(100);
+        if (!g_wantConnect)  Log("AP: disconnected by request");
+        else if (forced)     Log("AP: reconnecting (settings changed)");
+        else {
+            Log("AP: connection lost");   // brief backoff before auto-reconnect
+            for (int i = 0; i < 30 && g_apRunning && g_wantConnect && !g_forceReconnect; i++)
+                Sleep(100);
+        }
     }
 
     if (g_ws) { delete g_ws; g_ws = nullptr; }
@@ -607,26 +621,25 @@ static void ResetConnState() {
     g_itemNames.clear();
 }
 
-void APClient_Connect(const char* uri, const char* slot, const char* password) {
-    if (g_apRunning) { APClient_Reconnect(uri, slot, password); return; }
-    { std::lock_guard<std::mutex> lk(g_connMutex); g_uri = uri; g_slot = slot; g_password = password; }
-    g_apRunning = true;
-    Log("Connecting to AP server: %s as slot: %s", uri, slot);
+// Ensure the (single, persistent) AP thread is running.
+static void EnsureThread() {
+    if (g_apRunning.exchange(true)) return;
     g_apThread = std::thread(APThread);
     g_apThread.detach();
+}
+
+void APClient_Connect(const char* uri, const char* slot, const char* password) {
+    APClient_Reconnect(uri, slot, password);
 }
 
 void APClient_Reconnect(const char* uri, const char* slot, const char* password) {
     { std::lock_guard<std::mutex> lk(g_connMutex); g_uri = uri; g_slot = slot; g_password = password; }
     ResetConnState();
-    Log("Reconnecting to AP server: %s as slot: %s", uri, slot);
-    if (!g_apRunning) {                 // thread not started yet -> start it
-        g_apRunning = true;
-        g_apThread = std::thread(APThread);
-        g_apThread.detach();
-    } else {
-        g_forceReconnect = true;        // running -> recycle the socket
-    }
+    g_apConnected = false;
+    g_wantConnect = true;
+    g_forceReconnect = true;            // recycle if already connected
+    Log("Connecting to AP server: %s as slot: %s", uri, slot);
+    EnsureThread();
 }
 
 std::string APClient_StatusText() {
@@ -635,11 +648,20 @@ std::string APClient_StatusText() {
         { std::lock_guard<std::mutex> lk(g_connMutex); slot = g_slot; }
         return "Connected as " + slot;
     }
-    if (g_wsOpen)   return "Authenticating...";
-    if (g_apRunning) return "Connecting...";
-    return "Disconnected";
+    if (!g_wantConnect) return "Disconnected";
+    if (g_wsOpen)       return "Authenticating...";
+    return "Connecting...";
+}
+
+int APClient_State() {
+    if (g_apConnected) return AP_CONNECTED;
+    if (g_wantConnect) return AP_CONNECTING;
+    return AP_DISCONNECTED;
 }
 
 void APClient_Disconnect() {
-    g_apRunning = false;
+    g_wantConnect = false;
+    g_apConnected = false;
+    g_forceReconnect = true;            // break the inner loop and drop the socket
+    Log("Disconnect requested");
 }

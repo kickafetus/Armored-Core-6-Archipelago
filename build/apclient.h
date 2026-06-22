@@ -10,6 +10,10 @@ void APClient_Disconnect();
 void APClient_Reconnect(const char* uri, const char* slot, const char* password);
 // Short human-readable connection state for the settings UI.
 std::string APClient_StatusText();
+
+// Connection state for the settings UI button logic.
+enum APConnState { AP_DISCONNECTED = 0, AP_CONNECTING = 1, AP_CONNECTED = 2 };
+int APClient_State();
 void APClient_SendCheck(int64_t locationId);
 void APClient_SendGoal();
 
